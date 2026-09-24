@@ -2,8 +2,8 @@ use clap::{Arg, ArgAction, CommandFactory, Parser, ValueEnum, ValueHint};
 use serde_json::{json, Value};
 use std::{path::PathBuf, process::ExitCode};
 use stitchr_core::{
-    compose, export_image, load_image, Alignment, ComposeOptions, ExportFormat, Layout,
-    StackDirection,
+    export_image, render_paths, CompositionSpec, ExportFormat, SpecAlignment, SpecLayout,
+    SpecPosition, SPEC_VERSION,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -27,7 +27,7 @@ enum CliAlignment {
     version,
     about = "Combine PNG and JPEG images into one image",
     long_about = "Arrange PNG/JPEG images in a grid, horizontal or vertical stack, or at explicit freeform positions. Output format is selected by the output file extension.",
-    after_help = "Examples:\n  stitchr img1.png img2.png --layout grid --max-size 2000 --spacing 10\n  stitchr img1.png img2.jpg --layout horizontal --alignment center -o combined.jpg\n  stitchr img1.png img2.png --layout freeform --position 0 0 --position 300 80 -o combined.png"
+    after_help = "Examples:\n  stitchr img1.png img2.png --layout grid --max-size 2000 --spacing 10\n  stitchr img1.png img2.jpg --layout horizontal --alignment center -o combined.jpg\n  stitchr img1.png img2.png --layout freeform --position 0 0 --position 300 80 -o combined.png\n  stitchr img1.png img2.png --print-spec"
 )]
 struct Cli {
     #[arg(required_unless_present = "help_json", num_args = 1.., value_name = "IMAGE", help = "Input PNG/JPEG paths (one or more; required unless --help-json/--schema)")]
@@ -77,6 +77,9 @@ struct Cli {
 
     #[arg(long = "help-json", visible_alias = "schema", action = ArgAction::SetTrue, help = "Print the full CLI specification as JSON (boolean; default: false)")]
     help_json: bool,
+
+    #[arg(long = "print-spec", action = ArgAction::SetTrue, help = "Print the composition spec as JSON without loading images (boolean; default: false)")]
+    print_spec: bool,
 }
 
 fn argument_schema(arg: &Arg) -> Value {
@@ -162,7 +165,62 @@ fn schema() -> Value {
     })
 }
 
-fn run(cli: Cli) -> Result<PathBuf, String> {
+fn build_spec(cli: &Cli) -> Result<CompositionSpec, String> {
+    let paths = cli
+        .images
+        .iter()
+        .map(|path| {
+            path.to_str()
+                .map(str::to_owned)
+                .ok_or_else(|| format!("input path must be UTF-8: {}", path.display()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let layout = match cli.layout {
+        CliLayout::Grid => SpecLayout::Grid,
+        CliLayout::Horizontal => SpecLayout::Horizontal,
+        CliLayout::Vertical => SpecLayout::Vertical,
+        CliLayout::Freeform => SpecLayout::Freeform,
+    };
+    let alignment = match cli.alignment {
+        CliAlignment::Start => SpecAlignment::Start,
+        CliAlignment::Center => SpecAlignment::Center,
+        CliAlignment::End => SpecAlignment::End,
+    };
+    Ok(CompositionSpec {
+        version: SPEC_VERSION,
+        paths,
+        layout,
+        columns: if cli.layout == CliLayout::Grid {
+            cli.columns
+        } else {
+            2
+        },
+        spacing: if cli.layout == CliLayout::Freeform {
+            0
+        } else {
+            cli.spacing
+        },
+        alignment: if cli.layout == CliLayout::Freeform {
+            SpecAlignment::Start
+        } else {
+            alignment
+        },
+        max_size: cli.max_size,
+        positions: if cli.layout == CliLayout::Freeform {
+            cli.position
+                .chunks_exact(2)
+                .map(|pair| SpecPosition {
+                    x: pair[0],
+                    y: pair[1],
+                })
+                .collect()
+        } else {
+            Vec::new()
+        },
+    })
+}
+
+fn run(cli: Cli, spec: CompositionSpec) -> Result<PathBuf, String> {
     let format = match cli
         .output
         .extension()
@@ -176,43 +234,7 @@ fn run(cli: Cli) -> Result<PathBuf, String> {
         }
         _ => return Err("output filename must end in .png, .jpg, or .jpeg".to_owned()),
     };
-    let images = cli
-        .images
-        .iter()
-        .map(|path| {
-            load_image(path).map_err(|error| format!("cannot load {}: {error}", path.display()))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let layout = match cli.layout {
-        CliLayout::Grid => Layout::Grid {
-            columns: cli.columns as usize,
-        },
-        CliLayout::Horizontal => Layout::Stack {
-            direction: StackDirection::Horizontal,
-        },
-        CliLayout::Vertical => Layout::Stack {
-            direction: StackDirection::Vertical,
-        },
-        CliLayout::Freeform => Layout::Freeform {
-            positions: cli
-                .position
-                .chunks_exact(2)
-                .map(|pair| (pair[0], pair[1]))
-                .collect(),
-        },
-    };
-    let alignment = match cli.alignment {
-        CliAlignment::Start => Alignment::Start,
-        CliAlignment::Center => Alignment::Center,
-        CliAlignment::End => Alignment::End,
-    };
-    let options = ComposeOptions {
-        layout,
-        spacing: cli.spacing,
-        alignment,
-        max_size: cli.max_size,
-    };
-    let composed = compose(&images, &options).map_err(|error| error.to_string())?;
+    let composed = render_paths(&spec).map_err(|error| error.to_string())?;
     export_image(&composed, &cli.output, format)
         .map_err(|error| format!("cannot write {}: {error}", cli.output.display()))?;
     Ok(cli.output)
@@ -225,7 +247,27 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    match run(cli) {
+    let spec = match build_spec(&cli) {
+        Ok(spec) => spec,
+        Err(error) => {
+            eprintln!("stitchr: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if cli.print_spec {
+        return match serde_json::to_string_pretty(&spec) {
+            Ok(json) => {
+                println!("{json}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("stitchr: cannot print spec: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+
+    match run(cli, spec) {
         Ok(output) => {
             println!("{}", output.display());
             ExitCode::SUCCESS
@@ -267,6 +309,73 @@ mod tests {
         assert_eq!(cli.columns, 2);
         assert_eq!(cli.output, PathBuf::from("stitched.png"));
         assert!(Cli::try_parse_from(["stitchr"]).is_err());
+    }
+
+    #[test]
+    fn builds_spec_without_opening_input_images() {
+        let cli = Cli::try_parse_from([
+            "stitchr",
+            "missing-one.png",
+            "missing-two.jpg",
+            "--layout",
+            "grid",
+            "--spacing",
+            "10",
+            "--max-size",
+            "2000",
+            "--print-spec",
+        ])
+        .unwrap();
+        let spec = build_spec(&cli).unwrap();
+
+        assert!(cli.print_spec);
+        assert_eq!(
+            spec,
+            CompositionSpec {
+                version: SPEC_VERSION,
+                paths: vec!["missing-one.png".into(), "missing-two.jpg".into()],
+                layout: SpecLayout::Grid,
+                columns: 2,
+                spacing: 10,
+                alignment: SpecAlignment::Start,
+                max_size: Some(2000),
+                positions: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn freeform_spec_keeps_positions_and_normalizes_ignored_options() {
+        let cli = Cli::try_parse_from([
+            "stitchr",
+            "a.png",
+            "b.png",
+            "--layout",
+            "freeform",
+            "--columns",
+            "5",
+            "--spacing",
+            "40",
+            "--alignment",
+            "end",
+            "--position",
+            "1",
+            "2",
+            "--position",
+            "3",
+            "4",
+        ])
+        .unwrap();
+        let spec = build_spec(&cli).unwrap();
+
+        assert_eq!(spec.layout, SpecLayout::Freeform);
+        assert_eq!(
+            spec.positions,
+            [SpecPosition { x: 1, y: 2 }, SpecPosition { x: 3, y: 4 }]
+        );
+        assert_eq!(spec.columns, 2);
+        assert_eq!(spec.spacing, 0);
+        assert_eq!(spec.alignment, SpecAlignment::Start);
     }
 
     #[test]
@@ -313,6 +422,7 @@ mod tests {
         assert_eq!(by_name("help_json")["type"], "boolean");
         assert_eq!(by_name("help_json")["default"], false);
         assert_eq!(by_name("help_json")["aliases"], json!(["--schema"]));
+        assert_eq!(by_name("print_spec")["type"], "boolean");
         assert!(by_name("help_json")["value_names"].is_null());
         assert_eq!(
             by_name("images")["required_unless"],
@@ -348,8 +458,9 @@ mod tests {
             png.to_str().unwrap(),
         ])
         .unwrap();
-        assert_eq!(run(freeform).unwrap(), png);
-        let result = load_image(&png).unwrap();
+        let spec = build_spec(&freeform).unwrap();
+        assert_eq!(run(freeform, spec).unwrap(), png);
+        let result = stitchr_core::load_image(&png).unwrap();
         assert_eq!((result.width(), result.height()), (4, 3));
 
         let vertical = Cli::try_parse_from([
@@ -364,8 +475,9 @@ mod tests {
             jpeg.to_str().unwrap(),
         ])
         .unwrap();
-        assert_eq!(run(vertical).unwrap(), jpeg);
-        let result = load_image(&jpeg).unwrap();
+        let spec = build_spec(&vertical).unwrap();
+        assert_eq!(run(vertical, spec).unwrap(), jpeg);
+        let result = stitchr_core::load_image(&jpeg).unwrap();
         assert_eq!((result.width(), result.height()), (2, 4));
         assert!(std::fs::read(&jpeg)
             .unwrap()

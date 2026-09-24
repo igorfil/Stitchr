@@ -184,9 +184,9 @@ mod tests {
             &[solid(1, 1, [255, 0, 0, 255]), solid(1, 1, [0, 0, 255, 255])],
         )
         .unwrap();
-        assert_eq!(image.dimensions(), (3, 1));
-        assert_eq!(image.get_pixel(0, 0).0, [255, 0, 0, 255]);
-        assert_eq!(image.get_pixel(2, 0).0, [0, 0, 255, 255]);
+        assert_eq!(image.dimensions(), (5, 3));
+        assert_eq!(image.get_pixel(1, 1).0, [255, 0, 0, 255]);
+        assert_eq!(image.get_pixel(3, 1).0, [0, 0, 255, 255]);
     }
 
     #[test]
@@ -206,13 +206,13 @@ mod tests {
 
         let result = compose(&images, &options).unwrap();
 
-        assert_eq!(result.dimensions(), (6, 6));
-        assert_eq!(result.get_pixel(2, 0).0, [255, 0, 0, 255]);
-        assert_eq!(result.get_pixel(4, 1).0, [0, 255, 0, 255]);
-        assert_eq!(result.get_pixel(0, 4).0, [0, 0, 255, 255]);
-        assert_eq!(result.get_pixel(5, 3).0, [255, 255, 0, 255]);
+        assert_eq!(result.dimensions(), (8, 8));
+        assert_eq!(result.get_pixel(3, 1).0, [255, 0, 0, 255]);
+        assert_eq!(result.get_pixel(5, 2).0, [0, 255, 0, 255]);
+        assert_eq!(result.get_pixel(1, 5).0, [0, 0, 255, 255]);
+        assert_eq!(result.get_pixel(6, 4).0, [255, 255, 0, 255]);
         assert_eq!(result.get_pixel(0, 0).0, [0, 0, 0, 255]);
-        assert_eq!(result.get_pixel(3, 4).0, [0, 0, 0, 255]);
+        assert_eq!(result.get_pixel(4, 5).0, [0, 0, 0, 255]);
     }
 
     #[test]
@@ -229,10 +229,10 @@ mod tests {
 
         let result = compose(&images, &options).unwrap();
 
-        assert_eq!(result.dimensions(), (5, 3));
-        assert_eq!(result.get_pixel(0, 1).0, [255, 0, 0, 255]);
-        assert_eq!(result.get_pixel(4, 0).0, [0, 0, 255, 255]);
-        assert_eq!(result.get_pixel(2, 1).0, [0, 0, 0, 255]);
+        assert_eq!(result.dimensions(), (9, 7));
+        assert_eq!(result.get_pixel(2, 3).0, [255, 0, 0, 255]);
+        assert_eq!(result.get_pixel(6, 2).0, [0, 0, 255, 255]);
+        assert_eq!(result.get_pixel(4, 3).0, [0, 0, 0, 255]);
         assert_eq!(result.get_pixel(0, 0).0, [0, 0, 0, 255]);
     }
 
@@ -250,11 +250,39 @@ mod tests {
 
         let result = compose(&images, &options).unwrap();
 
-        assert_eq!(result.dimensions(), (3, 4));
-        assert_eq!(result.get_pixel(2, 0).0, [255, 0, 0, 255]);
-        assert_eq!(result.get_pixel(0, 3).0, [0, 0, 255, 255]);
+        assert_eq!(result.dimensions(), (5, 6));
+        assert_eq!(result.get_pixel(3, 1).0, [255, 0, 0, 255]);
+        assert_eq!(result.get_pixel(1, 4).0, [0, 0, 255, 255]);
         assert_eq!(result.get_pixel(0, 0).0, [0, 0, 0, 255]);
-        assert_eq!(result.get_pixel(2, 2).0, [0, 0, 0, 255]);
+        assert_eq!(result.get_pixel(3, 3).0, [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn one_image_without_options_has_no_border_and_opaque_black_background() {
+        let image = solid(2, 1, [0, 0, 0, 0]);
+        let result = compose(&[image], &ComposeOptions::default()).unwrap();
+
+        assert_eq!(result.dimensions(), (2, 1));
+        assert_eq!(result.get_pixel(0, 0).0, [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn one_image_with_spacing_has_equal_black_border_on_all_sides() {
+        let image = solid(2, 1, [255, 0, 0, 255]);
+        let options = ComposeOptions {
+            spacing: 20,
+            ..ComposeOptions::default()
+        };
+
+        let result = compose(&[image], &options).unwrap();
+
+        assert_eq!(result.dimensions(), (42, 41));
+        assert_eq!(result.get_pixel(20, 20).0, [255, 0, 0, 255]);
+        assert_eq!(result.get_pixel(21, 20).0, [255, 0, 0, 255]);
+        assert_eq!(result.get_pixel(19, 20).0, [0, 0, 0, 255]);
+        assert_eq!(result.get_pixel(22, 20).0, [0, 0, 0, 255]);
+        assert_eq!(result.get_pixel(20, 19).0, [0, 0, 0, 255]);
+        assert_eq!(result.get_pixel(20, 21).0, [0, 0, 0, 255]);
     }
 
     #[test]

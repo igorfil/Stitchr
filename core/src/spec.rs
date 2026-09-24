@@ -127,8 +127,8 @@ mod tests {
     #[test]
     fn plans_grid_without_loading_or_painting_images() {
         let plan = plan_spec(&grid_spec(), &[(1, 2), (2, 1), (3, 2), (1, 3)]).unwrap();
-        assert_eq!((plan.width, plan.height), (6, 6));
-        assert_eq!(plan.positions, [(2, 0), (4, 1), (0, 4), (5, 3)]);
+        assert_eq!((plan.width, plan.height), (8, 8));
+        assert_eq!(plan.positions, [(3, 1), (5, 2), (1, 5), (6, 4)]);
     }
 
     #[test]
@@ -173,8 +173,8 @@ mod tests {
             background_color: RgbColor::default(),
         };
         let stacked = plan_spec(&stack, &[(2, 1), (1, 3)]).unwrap();
-        assert_eq!((stacked.width, stacked.height), (5, 3));
-        assert_eq!(stacked.positions, [(0, 1), (4, 0)]);
+        assert_eq!((stacked.width, stacked.height), (9, 7));
+        assert_eq!(stacked.positions, [(2, 3), (6, 2)]);
 
         let freeform = CompositionSpec {
             paths: stack.paths,

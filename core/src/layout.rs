@@ -102,12 +102,35 @@ pub(crate) fn plan(sizes: &[(u32, u32)], options: &ComposeOptions) -> Result<Pla
         return Err(ComposeError::InvalidMaxSize);
     }
 
-    match &options.layout {
-        Layout::Grid { columns: 0 } => Err(ComposeError::InvalidColumns),
-        Layout::Grid { columns } => grid(sizes, (*columns).min(sizes.len()), options),
-        Layout::Stack { direction } => stack(sizes, *direction, options),
-        Layout::Freeform { positions } => freeform(sizes, positions),
-    }
+    let plan = match &options.layout {
+        Layout::Grid { columns: 0 } => return Err(ComposeError::InvalidColumns),
+        Layout::Grid { columns } => grid(sizes, (*columns).min(sizes.len()), options)?,
+        Layout::Stack { direction } => stack(sizes, *direction, options)?,
+        Layout::Freeform { positions } => return freeform(sizes, positions),
+    };
+    with_padding(plan, options.spacing)
+}
+
+fn with_padding(plan: Plan, spacing: u32) -> Result<Plan, ComposeError> {
+    let margin = spacing.checked_mul(2).ok_or(ComposeError::SizeOverflow)?;
+    let width = plan
+        .width
+        .checked_add(margin)
+        .ok_or(ComposeError::SizeOverflow)?;
+    let height = plan
+        .height
+        .checked_add(margin)
+        .ok_or(ComposeError::SizeOverflow)?;
+    let positions = plan
+        .positions
+        .into_iter()
+        .map(|(x, y)| (x + spacing, y + spacing))
+        .collect();
+    Ok(Plan {
+        positions,
+        width,
+        height,
+    })
 }
 
 fn axis(lengths: &[u32], spacing: u32) -> Result<(Vec<u32>, u32), ComposeError> {

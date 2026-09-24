@@ -180,7 +180,7 @@ mod tests {
         )
         .unwrap();
         let image = load_image(target).unwrap();
-        assert_eq!((image.width(), image.height()), (22, 5));
+        assert_eq!((image.width(), image.height()), (26, 9));
     }
 
     #[test]

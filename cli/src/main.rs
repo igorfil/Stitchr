@@ -48,7 +48,7 @@ struct Cli {
         long,
         default_value_t = 0,
         value_name = "PIXELS",
-        help = "Space between grid cells or stacked images (nonnegative integer)"
+        help = "Space between images and around the canvas (nonnegative integer; grid/stack)"
     )]
     spacing: u32,
 
@@ -506,7 +506,7 @@ mod tests {
         let spec = build_spec(&vertical).unwrap();
         assert_eq!(run(vertical, spec).unwrap(), jpeg);
         let result = stitchr_core::load_image(&jpeg).unwrap();
-        assert_eq!((result.width(), result.height()), (2, 4));
+        assert_eq!((result.width(), result.height()), (6, 8));
         assert!(std::fs::read(&jpeg)
             .unwrap()
             .starts_with(&[0xff, 0xd8, 0xff]));

@@ -3,3 +3,6 @@
 *.xcuserstate
 xcuserdata/
 DerivedData/
+/app/.build/
+/app/Sources/Stitchr/Generated/
+/app/Sources/stitchr_coreFFI/

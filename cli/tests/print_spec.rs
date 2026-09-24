@@ -18,12 +18,15 @@ fn prints_spec_for_nonexistent_inputs_without_rendering() {
 
     assert!(result.status.success());
     let spec: Value = serde_json::from_slice(&result.stdout).unwrap();
-    assert_eq!(spec["version"], 1);
-    assert_eq!(spec["layout"], "vertical");
+    assert!(spec.get("version").is_none());
+    assert_eq!(spec["layout"]["type"], "stack");
+    assert_eq!(spec["layout"]["direction"], "vertical");
+    assert_eq!(spec["layout"]["spacing"], 8);
+    assert_eq!(spec["layout"]["alignment"], "start");
     assert_eq!(
         spec["paths"],
         json!(["/missing/first.png", "/missing/second.jpg"])
     );
-    assert_eq!(spec["spacing"], 8);
+    assert!(spec.get("spacing").is_none());
     assert_eq!(spec["max_size"], Value::Null);
 }

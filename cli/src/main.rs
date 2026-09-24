@@ -2,8 +2,8 @@ use clap::{Arg, ArgAction, CommandFactory, Parser, ValueEnum, ValueHint};
 use serde_json::{json, Value};
 use std::{path::PathBuf, process::ExitCode};
 use stitchr_core::{
-    export_image, render_paths, CompositionSpec, ExportFormat, SpecAlignment, SpecLayout,
-    SpecPosition, SPEC_VERSION,
+    export_image, render_paths, Alignment, CompositionSpec, ExportFormat, SpecLayout, SpecPosition,
+    StackDirection,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -175,48 +175,42 @@ fn build_spec(cli: &Cli) -> Result<CompositionSpec, String> {
                 .ok_or_else(|| format!("input path must be UTF-8: {}", path.display()))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let layout = match cli.layout {
-        CliLayout::Grid => SpecLayout::Grid,
-        CliLayout::Horizontal => SpecLayout::Horizontal,
-        CliLayout::Vertical => SpecLayout::Vertical,
-        CliLayout::Freeform => SpecLayout::Freeform,
-    };
     let alignment = match cli.alignment {
-        CliAlignment::Start => SpecAlignment::Start,
-        CliAlignment::Center => SpecAlignment::Center,
-        CliAlignment::End => SpecAlignment::End,
+        CliAlignment::Start => Alignment::Start,
+        CliAlignment::Center => Alignment::Center,
+        CliAlignment::End => Alignment::End,
     };
-    Ok(CompositionSpec {
-        version: SPEC_VERSION,
-        paths,
-        layout,
-        columns: if cli.layout == CliLayout::Grid {
-            cli.columns
-        } else {
-            2
+    let layout = match cli.layout {
+        CliLayout::Grid => SpecLayout::Grid {
+            columns: cli.columns,
+            spacing: cli.spacing,
+            alignment,
         },
-        spacing: if cli.layout == CliLayout::Freeform {
-            0
-        } else {
-            cli.spacing
+        CliLayout::Horizontal => SpecLayout::Stack {
+            direction: StackDirection::Horizontal,
+            spacing: cli.spacing,
+            alignment,
         },
-        alignment: if cli.layout == CliLayout::Freeform {
-            SpecAlignment::Start
-        } else {
-            alignment
+        CliLayout::Vertical => SpecLayout::Stack {
+            direction: StackDirection::Vertical,
+            spacing: cli.spacing,
+            alignment,
         },
-        max_size: cli.max_size,
-        positions: if cli.layout == CliLayout::Freeform {
-            cli.position
+        CliLayout::Freeform => SpecLayout::Freeform {
+            positions: cli
+                .position
                 .chunks_exact(2)
                 .map(|pair| SpecPosition {
                     x: pair[0],
                     y: pair[1],
                 })
-                .collect()
-        } else {
-            Vec::new()
+                .collect(),
         },
+    };
+    Ok(CompositionSpec {
+        paths,
+        layout,
+        max_size: cli.max_size,
     })
 }
 
@@ -332,20 +326,19 @@ mod tests {
         assert_eq!(
             spec,
             CompositionSpec {
-                version: SPEC_VERSION,
                 paths: vec!["missing-one.png".into(), "missing-two.jpg".into()],
-                layout: SpecLayout::Grid,
-                columns: 2,
-                spacing: 10,
-                alignment: SpecAlignment::Start,
+                layout: SpecLayout::Grid {
+                    columns: 2,
+                    spacing: 10,
+                    alignment: Alignment::Start,
+                },
                 max_size: Some(2000),
-                positions: Vec::new(),
             }
         );
     }
 
     #[test]
-    fn freeform_spec_keeps_positions_and_normalizes_ignored_options() {
+    fn freeform_spec_contains_only_positions() {
         let cli = Cli::try_parse_from([
             "stitchr",
             "a.png",
@@ -368,14 +361,17 @@ mod tests {
         .unwrap();
         let spec = build_spec(&cli).unwrap();
 
-        assert_eq!(spec.layout, SpecLayout::Freeform);
         assert_eq!(
-            spec.positions,
-            [SpecPosition { x: 1, y: 2 }, SpecPosition { x: 3, y: 4 }]
+            spec.layout,
+            SpecLayout::Freeform {
+                positions: vec![SpecPosition { x: 1, y: 2 }, SpecPosition { x: 3, y: 4 }]
+            }
         );
-        assert_eq!(spec.columns, 2);
-        assert_eq!(spec.spacing, 0);
-        assert_eq!(spec.alignment, SpecAlignment::Start);
+        let json = serde_json::to_value(&spec).unwrap();
+        assert_eq!(json["layout"]["type"], "freeform");
+        assert!(json["layout"].get("columns").is_none());
+        assert!(json["layout"].get("spacing").is_none());
+        assert!(json["layout"].get("alignment").is_none());
     }
 
     #[test]

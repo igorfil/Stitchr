@@ -6,10 +6,7 @@ uniffi::setup_scaffolding!();
 
 pub use image::DynamicImage;
 pub use layout::{Alignment, ComposeError, ComposeOptions, Layout, StackDirection};
-pub use spec::{
-    plan_spec, CompositionSpec, PlacementPlan, SpecAlignment, SpecLayout, SpecPosition,
-    SPEC_VERSION,
-};
+pub use spec::{plan_spec, CompositionSpec, PlacementPlan, SpecLayout, SpecPosition};
 
 use image::{imageops, ImageFormat, Rgba, RgbaImage};
 use std::path::Path;
@@ -152,17 +149,16 @@ mod tests {
     #[test]
     fn backend_renders_a_hand_written_spec_with_in_memory_images() {
         let spec = CompositionSpec {
-            version: SPEC_VERSION,
             paths: vec![
                 "no-files-needed-1.png".into(),
                 "no-files-needed-2.png".into(),
             ],
-            layout: SpecLayout::Horizontal,
-            columns: 2,
-            spacing: 1,
-            alignment: SpecAlignment::Start,
+            layout: SpecLayout::Stack {
+                direction: StackDirection::Horizontal,
+                spacing: 1,
+                alignment: Alignment::Start,
+            },
             max_size: None,
-            positions: Vec::new(),
         };
 
         let image = render_spec(

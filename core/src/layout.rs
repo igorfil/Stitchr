@@ -55,6 +55,8 @@ pub enum ComposeError {
     InvalidImageDimensions,
     InvalidColumns,
     InvalidMaxSize,
+    UnsupportedSpecVersion { actual: u32 },
+    ImageCountMismatch { expected: usize, actual: usize },
     FreeformPositionCount { expected: usize, actual: usize },
     SizeOverflow,
 }
@@ -66,6 +68,12 @@ impl fmt::Display for ComposeError {
             Self::InvalidImageDimensions => write!(f, "image dimensions must be nonzero"),
             Self::InvalidColumns => write!(f, "grid columns must be nonzero"),
             Self::InvalidMaxSize => write!(f, "max size must be nonzero"),
+            Self::UnsupportedSpecVersion { actual } => {
+                write!(f, "unsupported composition spec version {actual}")
+            }
+            Self::ImageCountMismatch { expected, actual } => {
+                write!(f, "expected {expected} images, got {actual}")
+            }
             Self::FreeformPositionCount { expected, actual } => {
                 write!(f, "expected {expected} freeform positions, got {actual}")
             }

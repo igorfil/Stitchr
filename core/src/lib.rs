@@ -1,10 +1,15 @@
 pub mod ffi;
 mod layout;
+pub mod spec;
 
 uniffi::setup_scaffolding!();
 
 pub use image::DynamicImage;
 pub use layout::{Alignment, ComposeError, ComposeOptions, Layout, StackDirection};
+pub use spec::{
+    plan_spec, CompositionSpec, PlacementPlan, SpecAlignment, SpecLayout, SpecPosition,
+    SPEC_VERSION,
+};
 
 use image::{imageops, ImageFormat, Rgba, RgbaImage};
 use std::path::Path;
@@ -29,18 +34,76 @@ pub fn compose(
         .collect();
     let plan = layout::plan(&sizes, options)?;
 
+    render_plan(
+        images,
+        &PlacementPlan {
+            positions: plan.positions,
+            width: plan.width,
+            height: plan.height,
+            max_size: options.max_size,
+        },
+    )
+}
+
+pub fn render_plan(
+    images: &[DynamicImage],
+    plan: &PlacementPlan,
+) -> Result<DynamicImage, ComposeError> {
+    if plan.positions.len() != images.len() {
+        return Err(ComposeError::ImageCountMismatch {
+            expected: plan.positions.len(),
+            actual: images.len(),
+        });
+    }
     let mut canvas = RgbaImage::new(plan.width, plan.height);
-    for (image, (x, y)) in images.iter().zip(plan.positions) {
+    for (image, &(x, y)) in images.iter().zip(&plan.positions) {
         imageops::overlay(&mut canvas, image, i64::from(x), i64::from(y));
     }
 
     let composed = DynamicImage::ImageRgba8(canvas);
-    match options.max_size {
+    match plan.max_size {
         Some(max_size) if plan.width.max(plan.height) > max_size => {
             Ok(composed.resize(max_size, max_size, imageops::FilterType::Lanczos3))
         }
         _ => Ok(composed),
     }
+}
+
+pub fn render_spec(
+    spec: &CompositionSpec,
+    images: &[DynamicImage],
+) -> Result<DynamicImage, ComposeError> {
+    let dimensions = images
+        .iter()
+        .map(|image| (image.width(), image.height()))
+        .collect::<Vec<_>>();
+    let plan = plan_spec(spec, &dimensions)?;
+    render_plan(images, &plan)
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum RenderError {
+    #[error("cannot load {path}: {source}")]
+    Input {
+        path: String,
+        source: image::ImageError,
+    },
+    #[error(transparent)]
+    Composition(#[from] ComposeError),
+}
+
+pub fn render_paths(spec: &CompositionSpec) -> Result<DynamicImage, RenderError> {
+    let images = spec
+        .paths
+        .iter()
+        .map(|path| {
+            load_image(path).map_err(|source| RenderError::Input {
+                path: path.clone(),
+                source,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    render_spec(spec, &images).map_err(RenderError::Composition)
 }
 
 pub fn export_image(
@@ -67,6 +130,49 @@ mod tests {
 
     fn solid(width: u32, height: u32, color: [u8; 4]) -> DynamicImage {
         DynamicImage::ImageRgba8(RgbaImage::from_pixel(width, height, Rgba(color)))
+    }
+
+    #[test]
+    fn renderer_paints_an_explicit_plan_without_planning() {
+        let plan = PlacementPlan {
+            positions: vec![(0, 0), (3, 1)],
+            width: 4,
+            height: 2,
+            max_size: None,
+        };
+        let images = [solid(1, 1, [255, 0, 0, 255]), solid(1, 1, [0, 0, 255, 255])];
+
+        let rendered = render_plan(&images, &plan).unwrap();
+        assert_eq!(rendered.dimensions(), (4, 2));
+        assert_eq!(rendered.get_pixel(0, 0).0, [255, 0, 0, 255]);
+        assert_eq!(rendered.get_pixel(3, 1).0, [0, 0, 255, 255]);
+        assert_eq!(rendered.get_pixel(1, 0).0, [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn backend_renders_a_hand_written_spec_with_in_memory_images() {
+        let spec = CompositionSpec {
+            version: SPEC_VERSION,
+            paths: vec![
+                "no-files-needed-1.png".into(),
+                "no-files-needed-2.png".into(),
+            ],
+            layout: SpecLayout::Horizontal,
+            columns: 2,
+            spacing: 1,
+            alignment: SpecAlignment::Start,
+            max_size: None,
+            positions: Vec::new(),
+        };
+
+        let image = render_spec(
+            &spec,
+            &[solid(1, 1, [255, 0, 0, 255]), solid(1, 1, [0, 0, 255, 255])],
+        )
+        .unwrap();
+        assert_eq!(image.dimensions(), (3, 1));
+        assert_eq!(image.get_pixel(0, 0).0, [255, 0, 0, 255]);
+        assert_eq!(image.get_pixel(2, 0).0, [0, 0, 255, 255]);
     }
 
     #[test]

@@ -1,9 +1,11 @@
+pub mod color;
 pub mod ffi;
 mod layout;
 pub mod spec;
 
 uniffi::setup_scaffolding!();
 
+pub use color::{ColorParseError, RgbColor};
 pub use image::DynamicImage;
 pub use layout::{Alignment, ComposeError, ComposeOptions, Layout, StackDirection};
 pub use spec::{plan_spec, CompositionSpec, PlacementPlan, SpecLayout, SpecPosition};
@@ -38,6 +40,7 @@ pub fn compose(
             width: plan.width,
             height: plan.height,
             max_size: options.max_size,
+            background_color: RgbColor::default(),
         },
     )
 }
@@ -52,9 +55,18 @@ pub fn render_plan(
             actual: images.len(),
         });
     }
-    let mut canvas = RgbaImage::new(plan.width, plan.height);
+    let color = plan.background_color;
+    let mut canvas = RgbaImage::from_pixel(
+        plan.width,
+        plan.height,
+        Rgba([color.red, color.green, color.blue, 255]),
+    );
     for (image, &(x, y)) in images.iter().zip(&plan.positions) {
         imageops::overlay(&mut canvas, image, i64::from(x), i64::from(y));
+    }
+    // `imageops::overlay` can round an opaque destination's alpha down to 254.
+    for pixel in canvas.pixels_mut() {
+        pixel.0[3] = 255;
     }
 
     let composed = DynamicImage::ImageRgba8(canvas);
@@ -136,6 +148,11 @@ mod tests {
             width: 4,
             height: 2,
             max_size: None,
+            background_color: RgbColor {
+                red: 12,
+                green: 34,
+                blue: 56,
+            },
         };
         let images = [solid(1, 1, [255, 0, 0, 255]), solid(1, 1, [0, 0, 255, 255])];
 
@@ -143,7 +160,7 @@ mod tests {
         assert_eq!(rendered.dimensions(), (4, 2));
         assert_eq!(rendered.get_pixel(0, 0).0, [255, 0, 0, 255]);
         assert_eq!(rendered.get_pixel(3, 1).0, [0, 0, 255, 255]);
-        assert_eq!(rendered.get_pixel(1, 0).0, [0, 0, 0, 0]);
+        assert_eq!(rendered.get_pixel(1, 0).0, [12, 34, 56, 255]);
     }
 
     #[test]
@@ -159,6 +176,7 @@ mod tests {
                 alignment: Alignment::Start,
             },
             max_size: None,
+            background_color: RgbColor::default(),
         };
 
         let image = render_spec(
@@ -193,8 +211,8 @@ mod tests {
         assert_eq!(result.get_pixel(4, 1).0, [0, 255, 0, 255]);
         assert_eq!(result.get_pixel(0, 4).0, [0, 0, 255, 255]);
         assert_eq!(result.get_pixel(5, 3).0, [255, 255, 0, 255]);
-        assert_eq!(result.get_pixel(0, 0).0, [0, 0, 0, 0]);
-        assert_eq!(result.get_pixel(3, 4).0, [0, 0, 0, 0]);
+        assert_eq!(result.get_pixel(0, 0).0, [0, 0, 0, 255]);
+        assert_eq!(result.get_pixel(3, 4).0, [0, 0, 0, 255]);
     }
 
     #[test]
@@ -214,8 +232,8 @@ mod tests {
         assert_eq!(result.dimensions(), (5, 3));
         assert_eq!(result.get_pixel(0, 1).0, [255, 0, 0, 255]);
         assert_eq!(result.get_pixel(4, 0).0, [0, 0, 255, 255]);
-        assert_eq!(result.get_pixel(2, 1).0, [0, 0, 0, 0]);
-        assert_eq!(result.get_pixel(0, 0).0, [0, 0, 0, 0]);
+        assert_eq!(result.get_pixel(2, 1).0, [0, 0, 0, 255]);
+        assert_eq!(result.get_pixel(0, 0).0, [0, 0, 0, 255]);
     }
 
     #[test]
@@ -235,8 +253,8 @@ mod tests {
         assert_eq!(result.dimensions(), (3, 4));
         assert_eq!(result.get_pixel(2, 0).0, [255, 0, 0, 255]);
         assert_eq!(result.get_pixel(0, 3).0, [0, 0, 255, 255]);
-        assert_eq!(result.get_pixel(0, 0).0, [0, 0, 0, 0]);
-        assert_eq!(result.get_pixel(2, 2).0, [0, 0, 0, 0]);
+        assert_eq!(result.get_pixel(0, 0).0, [0, 0, 0, 255]);
+        assert_eq!(result.get_pixel(2, 2).0, [0, 0, 0, 255]);
     }
 
     #[test]
@@ -261,7 +279,7 @@ mod tests {
         assert_eq!(result.get_pixel(1, 1).0, [255, 0, 0, 255]);
         assert_eq!(result.get_pixel(2, 2).0, [0, 255, 0, 255]);
         assert_eq!(result.get_pixel(5, 0).0, [0, 0, 255, 255]);
-        assert_eq!(result.get_pixel(0, 0).0, [0, 0, 0, 0]);
+        assert_eq!(result.get_pixel(0, 0).0, [0, 0, 0, 255]);
     }
 
     #[test]
@@ -342,7 +360,7 @@ mod tests {
     }
 
     #[test]
-    fn png_roundtrip_preserves_alpha() {
+    fn png_roundtrip_blends_alpha_onto_black() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("output.png");
         let original =
@@ -352,7 +370,7 @@ mod tests {
         let loaded = load_image(&path).unwrap();
 
         assert_eq!(loaded.dimensions(), (2, 2));
-        assert_eq!(loaded.get_pixel(0, 0).0, [255, 0, 0, 128]);
+        assert_eq!(loaded.get_pixel(0, 0).0, [128, 0, 0, 255]);
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use crate::{layout, Alignment, ComposeError, ComposeOptions, Layout, StackDirection};
+use crate::{layout, Alignment, ComposeError, ComposeOptions, Layout, RgbColor, StackDirection};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -30,6 +30,7 @@ pub struct CompositionSpec {
     pub paths: Vec<String>,
     pub layout: SpecLayout,
     pub max_size: Option<u32>,
+    pub background_color: RgbColor,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +39,7 @@ pub struct PlacementPlan {
     pub width: u32,
     pub height: u32,
     pub max_size: Option<u32>,
+    pub background_color: RgbColor,
 }
 
 pub fn plan_spec(
@@ -96,6 +98,7 @@ pub fn plan_spec(
         width: plan.width,
         height: plan.height,
         max_size: spec.max_size,
+        background_color: spec.background_color,
     })
 }
 
@@ -117,6 +120,7 @@ mod tests {
                 alignment: Alignment::End,
             },
             max_size: None,
+            background_color: RgbColor::default(),
         }
     }
 
@@ -136,6 +140,7 @@ mod tests {
         assert_eq!(value["layout"]["spacing"], 1);
         assert_eq!(value["layout"]["alignment"], "end");
         assert_eq!(value["paths"][0], "one.png");
+        assert_eq!(value["background_color"]["red"], 0);
         assert!(value.get("version").is_none());
         assert!(value.get("spacing").is_none());
         assert_eq!(
@@ -165,6 +170,7 @@ mod tests {
                 alignment: Alignment::Center,
             },
             max_size: None,
+            background_color: RgbColor::default(),
         };
         let stacked = plan_spec(&stack, &[(2, 1), (1, 3)]).unwrap();
         assert_eq!((stacked.width, stacked.height), (5, 3));
@@ -176,6 +182,7 @@ mod tests {
                 positions: vec![SpecPosition { x: 1, y: 2 }, SpecPosition { x: 3, y: 0 }],
             },
             max_size: None,
+            background_color: RgbColor::default(),
         };
         let placed = plan_spec(&freeform, &[(1, 1), (2, 2)]).unwrap();
         assert_eq!((placed.width, placed.height), (5, 3));

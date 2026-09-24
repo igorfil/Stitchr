@@ -2,8 +2,8 @@ use clap::{Arg, ArgAction, CommandFactory, Parser, ValueEnum, ValueHint};
 use serde_json::{json, Value};
 use std::{path::PathBuf, process::ExitCode};
 use stitchr_core::{
-    export_image, render_paths, Alignment, CompositionSpec, ExportFormat, SpecLayout, SpecPosition,
-    StackDirection,
+    export_image, render_paths, Alignment, CompositionSpec, ExportFormat, RgbColor, SpecLayout,
+    SpecPosition, StackDirection,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -27,7 +27,7 @@ enum CliAlignment {
     version,
     about = "Combine PNG and JPEG images into one image",
     long_about = "Arrange PNG/JPEG images in a grid, horizontal or vertical stack, or at explicit freeform positions. Output format is selected by the output file extension.",
-    after_help = "Examples:\n  stitchr img1.png img2.png --layout grid --max-size 2000 --spacing 10\n  stitchr img1.png img2.jpg --layout horizontal --alignment center -o combined.jpg\n  stitchr img1.png img2.png --layout freeform --position 0 0 --position 300 80 -o combined.png\n  stitchr img1.png img2.png --print-spec"
+    after_help = "Examples:\n  stitchr img1.png img2.png --layout grid --max-size 2000 --spacing 10\n  stitchr img1.png img2.jpg --layout horizontal --alignment center -o combined.jpg\n  stitchr img1.png img2.png --layout freeform --position 0 0 --position 300 80 -o combined.png\n  stitchr img1.png img2.png --background rebeccapurple --print-spec"
 )]
 struct Cli {
     #[arg(required_unless_present = "help_json", num_args = 1.., value_name = "IMAGE", help = "Input PNG/JPEG paths (one or more; required unless --help-json/--schema)")]
@@ -63,6 +63,9 @@ struct Cli {
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..), value_name = "PIXELS", help = "Maximum output width or height (positive integer; default: no limit)")]
     max_size: Option<u32>,
 
+    #[arg(long = "background", default_value_t = RgbColor::default(), value_name = "COLOR", help = "Opaque background: RGB #RRGGBB, rgb(r,g,b), or common color name")]
+    background_color: RgbColor,
+
     #[arg(long, action = ArgAction::Append, num_args = 2, value_names = ["X", "Y"], help = "Freeform top-left coordinates (nonnegative integers; repeat once per image)")]
     position: Vec<u32>,
 
@@ -94,9 +97,10 @@ fn argument_schema(arg: &Arg) -> Value {
         ArgAction::SetTrue | ArgAction::Help | ArgAction::Version
     );
     let path = arg.get_value_hint() == ValueHint::AnyPath;
+    let color = arg.get_id().as_str() == "background_color";
     let value_type = if boolean {
         "boolean"
-    } else if path || !choices.is_empty() {
+    } else if path || color || !choices.is_empty() {
         "string"
     } else {
         "integer"
@@ -122,7 +126,7 @@ fn argument_schema(arg: &Arg) -> Value {
         "aliases": arg.get_visible_aliases().unwrap_or_default().into_iter().map(|alias| format!("--{alias}")).collect::<Vec<_>>(),
         "kind": if arg.is_positional() { "positional" } else { "option" },
         "type": value_type,
-        "format": if path { Some("path") } else { None },
+        "format": if path { Some("path") } else if color { Some("color") } else { None },
         "enum": choices,
         "default": default,
         "required": arg.is_required_set() || arg.is_positional(),
@@ -211,6 +215,7 @@ fn build_spec(cli: &Cli) -> Result<CompositionSpec, String> {
         paths,
         layout,
         max_size: cli.max_size,
+        background_color: cli.background_color,
     })
 }
 
@@ -333,6 +338,7 @@ mod tests {
                     alignment: Alignment::Start,
                 },
                 max_size: Some(2000),
+                background_color: RgbColor::default(),
             }
         );
     }
@@ -375,6 +381,29 @@ mod tests {
     }
 
     #[test]
+    fn background_argument_uses_the_shared_color_parser() {
+        let named =
+            Cli::try_parse_from(["stitchr", "missing.png", "--background", "rebeccapurple"])
+                .unwrap();
+        let rgb =
+            Cli::try_parse_from(["stitchr", "missing.png", "--background", "rgb(102,51,153)"])
+                .unwrap();
+
+        let named_color = build_spec(&named).unwrap().background_color;
+        let rgb_color = build_spec(&rgb).unwrap().background_color;
+        assert_eq!(named_color, rgb_color);
+        let expected = RgbColor {
+            red: 102,
+            green: 51,
+            blue: 153,
+        };
+        assert_eq!(named_color, expected);
+        assert!(
+            Cli::try_parse_from(["stitchr", "missing.png", "--background", "notacolor"]).is_err()
+        );
+    }
+
+    #[test]
     fn help_lists_options_defaults_and_examples() {
         let help = Cli::try_parse_from(["stitchr", "--help"])
             .unwrap_err()
@@ -413,6 +442,9 @@ mod tests {
         assert_eq!(by_name("layout")["default"], "grid");
         assert_eq!(by_name("spacing")["type"], "integer");
         assert_eq!(by_name("spacing")["default"], 0);
+        assert_eq!(by_name("background_color")["type"], "string");
+        assert_eq!(by_name("background_color")["format"], "color");
+        assert_eq!(by_name("background_color")["default"], "#000000");
         assert_eq!(by_name("position")["repeatable"], true);
         assert_eq!(by_name("position")["values_per_occurrence"]["min"], 2);
         assert_eq!(by_name("help_json")["type"], "boolean");

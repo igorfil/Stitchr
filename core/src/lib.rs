@@ -1,4 +1,7 @@
+pub mod ffi;
 mod layout;
+
+uniffi::setup_scaffolding!();
 
 pub use image::DynamicImage;
 pub use layout::{Alignment, ComposeError, ComposeOptions, Layout, StackDirection};

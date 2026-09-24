@@ -1,4 +1,5 @@
-use clap::{ArgAction, Parser, ValueEnum};
+use clap::{Arg, ArgAction, CommandFactory, Parser, ValueEnum, ValueHint};
+use serde_json::{json, Value};
 use std::{path::PathBuf, process::ExitCode};
 use stitchr_core::{
     compose, export_image, load_image, Alignment, ComposeOptions, ExportFormat, Layout,
@@ -29,7 +30,7 @@ enum CliAlignment {
     after_help = "Examples:\n  stitchr img1.png img2.png --layout grid --max-size 2000 --spacing 10\n  stitchr img1.png img2.jpg --layout horizontal --alignment center -o combined.jpg\n  stitchr img1.png img2.png --layout freeform --position 0 0 --position 300 80 -o combined.png"
 )]
 struct Cli {
-    #[arg(required = true, num_args = 1.., value_name = "IMAGE", help = "Input PNG/JPEG file paths (one or more)")]
+    #[arg(required_unless_present = "help_json", num_args = 1.., value_name = "IMAGE", help = "Input PNG/JPEG paths (one or more; required unless --help-json/--schema)")]
     images: Vec<PathBuf>,
 
     #[arg(
@@ -73,6 +74,92 @@ struct Cli {
         help = "Output file (.png, .jpg, or .jpeg; default: stitched.png)"
     )]
     output: PathBuf,
+
+    #[arg(long = "help-json", visible_alias = "schema", action = ArgAction::SetTrue, help = "Print the full CLI specification as JSON (boolean; default: false)")]
+    help_json: bool,
+}
+
+fn argument_schema(arg: &Arg) -> Value {
+    let choices: Vec<_> = arg
+        .get_possible_values()
+        .into_iter()
+        .filter(|value| !value.is_hide_set())
+        .map(|value| value.get_name().to_owned())
+        .collect();
+    let boolean = matches!(
+        arg.get_action(),
+        ArgAction::SetTrue | ArgAction::Help | ArgAction::Version
+    );
+    let path = arg.get_value_hint() == ValueHint::AnyPath;
+    let value_type = if boolean {
+        "boolean"
+    } else if path || !choices.is_empty() {
+        "string"
+    } else {
+        "integer"
+    };
+    let default = if boolean {
+        json!(false)
+    } else {
+        match arg.get_default_values().first() {
+            Some(value) if value_type == "integer" => value
+                .to_string_lossy()
+                .parse::<u64>()
+                .map_or(Value::Null, |number| json!(number)),
+            Some(value) => json!(value.to_string_lossy()),
+            None => Value::Null,
+        }
+    };
+    let arity = arg.get_num_args();
+
+    json!({
+        "name": arg.get_id().as_str(),
+        "long": arg.get_long().map(|long| format!("--{long}")),
+        "short": arg.get_short().map(|short| format!("-{short}")),
+        "aliases": arg.get_visible_aliases().unwrap_or_default().into_iter().map(|alias| format!("--{alias}")).collect::<Vec<_>>(),
+        "kind": if arg.is_positional() { "positional" } else { "option" },
+        "type": value_type,
+        "format": if path { Some("path") } else { None },
+        "enum": choices,
+        "default": default,
+        "required": arg.is_required_set() || arg.is_positional(),
+        "required_unless": if arg.is_positional() { vec!["--help-json", "--schema"] } else { vec![] },
+        "repeatable": matches!(arg.get_action(), ArgAction::Append),
+        "values_per_occurrence": {
+            "min": arity.map(|range| range.min_values()).unwrap_or(0),
+            "max": arity.and_then(|range| (range.max_values() != usize::MAX).then_some(range.max_values()))
+        },
+        "value_names": if boolean { None } else { arg.get_value_names().map(|names| names.iter().map(ToString::to_string).collect::<Vec<_>>()) },
+        "help": arg.get_help().map(ToString::to_string)
+    })
+}
+
+fn schema() -> Value {
+    let mut command = Cli::command();
+    command.build();
+    let usage = command.render_usage().to_string();
+    let after_help = command
+        .get_after_help()
+        .map(|text| text.to_string())
+        .unwrap_or_default();
+    let examples = after_help
+        .lines()
+        .skip(1)
+        .map(str::trim)
+        .collect::<Vec<_>>();
+    let arguments = command
+        .get_arguments()
+        .map(argument_schema)
+        .collect::<Vec<_>>();
+
+    json!({
+        "name": command.get_name(),
+        "version": command.get_version(),
+        "description": command.get_long_about().map(ToString::to_string),
+        "usage": usage,
+        "examples": examples,
+        "arguments": arguments
+    })
 }
 
 fn run(cli: Cli) -> Result<PathBuf, String> {
@@ -132,7 +219,13 @@ fn run(cli: Cli) -> Result<PathBuf, String> {
 }
 
 fn main() -> ExitCode {
-    match run(Cli::parse()) {
+    let cli = Cli::parse();
+    if cli.help_json {
+        println!("{}", schema());
+        return ExitCode::SUCCESS;
+    }
+
+    match run(cli) {
         Ok(output) => {
             println!("{}", output.display());
             ExitCode::SUCCESS
@@ -186,6 +279,46 @@ mod tests {
         assert!(help.contains("[default: stitched.png]"));
         assert!(help.contains("--position <X> <Y>"));
         assert!(help.contains("Examples:"));
+    }
+
+    #[test]
+    fn schema_lists_flags_types_enums_defaults_and_alias() {
+        assert!(
+            Cli::try_parse_from(["stitchr", "--help-json"])
+                .unwrap()
+                .help_json
+        );
+        assert!(
+            Cli::try_parse_from(["stitchr", "--schema"])
+                .unwrap()
+                .help_json
+        );
+
+        let value: Value = serde_json::from_str(&schema().to_string()).unwrap();
+        let args = value["arguments"].as_array().unwrap();
+        let by_name = |name| args.iter().find(|arg| arg["name"] == name).unwrap();
+
+        assert_eq!(by_name("images")["type"], "string");
+        assert_eq!(by_name("images")["format"], "path");
+        assert_eq!(by_name("images")["required"], true);
+        assert_eq!(
+            by_name("layout")["enum"],
+            json!(["grid", "horizontal", "vertical", "freeform"])
+        );
+        assert_eq!(by_name("layout")["default"], "grid");
+        assert_eq!(by_name("spacing")["type"], "integer");
+        assert_eq!(by_name("spacing")["default"], 0);
+        assert_eq!(by_name("position")["repeatable"], true);
+        assert_eq!(by_name("position")["values_per_occurrence"]["min"], 2);
+        assert_eq!(by_name("help_json")["type"], "boolean");
+        assert_eq!(by_name("help_json")["default"], false);
+        assert_eq!(by_name("help_json")["aliases"], json!(["--schema"]));
+        assert!(by_name("help_json")["value_names"].is_null());
+        assert_eq!(
+            by_name("images")["required_unless"],
+            json!(["--help-json", "--schema"])
+        );
+        assert!(value["examples"].as_array().unwrap().len() >= 2);
     }
 
     #[test]

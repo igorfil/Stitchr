@@ -3,5 +3,13 @@ name = "stitchr-cli"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "stitchr"
+path = "src/main.rs"
+
 [dependencies]
+clap = { version = "4", features = ["derive"] }
 stitchr-core = { path = "../core" }
+
+[dev-dependencies]
+tempfile = "3"

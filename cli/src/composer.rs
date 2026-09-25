@@ -249,6 +249,20 @@ mod tests {
         ])
         .unwrap();
         let spec = CliComposer::compose(&cli).unwrap();
+        let without_grid_options = compose_args(&[
+            "a.png",
+            "b.png",
+            "--layout",
+            "freeform",
+            "--background",
+            "rebeccapurple",
+            "--position",
+            "1",
+            "2",
+            "--position",
+            "3",
+            "4",
+        ]);
 
         assert_eq!(
             spec.layout,
@@ -256,6 +270,7 @@ mod tests {
                 positions: vec![SpecPosition { x: 1, y: 2 }, SpecPosition { x: 3, y: 4 }]
             }
         );
+        assert_eq!(spec, without_grid_options);
         let json = serde_json::to_value(&spec).unwrap();
         assert_eq!(json["layout"]["type"], "freeform");
         assert!(json["layout"].get("columns").is_none());

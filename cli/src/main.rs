@@ -1,10 +1,10 @@
+mod composer;
+
 use clap::{Arg, ArgAction, CommandFactory, Parser, ValueEnum, ValueHint};
+use composer::CliComposer;
 use serde_json::{json, Value};
 use std::{path::PathBuf, process::ExitCode};
-use stitchr_core::{
-    export_image, render_paths, Alignment, CompositionSpec, ExportFormat, RgbColor, SpecLayout,
-    SpecPosition, StackDirection,
-};
+use stitchr_core::{export_image, render_paths, CompositionSpec, ExportFormat, RgbColor};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum CliLayout {
@@ -166,55 +166,6 @@ fn schema() -> Value {
     })
 }
 
-fn build_spec(cli: &Cli) -> Result<CompositionSpec, String> {
-    let paths = cli
-        .images
-        .iter()
-        .map(|path| {
-            path.to_str()
-                .map(str::to_owned)
-                .ok_or_else(|| format!("input path must be UTF-8: {}", path.display()))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let alignment = match cli.alignment {
-        CliAlignment::Start => Alignment::Start,
-        CliAlignment::Center => Alignment::Center,
-        CliAlignment::End => Alignment::End,
-    };
-    let layout = match cli.layout {
-        CliLayout::Grid => SpecLayout::Grid {
-            columns: cli.columns,
-            spacing: cli.spacing,
-            alignment,
-        },
-        CliLayout::Horizontal => SpecLayout::Stack {
-            direction: StackDirection::Horizontal,
-            spacing: cli.spacing,
-            alignment,
-        },
-        CliLayout::Vertical => SpecLayout::Stack {
-            direction: StackDirection::Vertical,
-            spacing: cli.spacing,
-            alignment,
-        },
-        CliLayout::Freeform => SpecLayout::Freeform {
-            positions: cli
-                .position
-                .chunks_exact(2)
-                .map(|pair| SpecPosition {
-                    x: pair[0],
-                    y: pair[1],
-                })
-                .collect(),
-        },
-    };
-    Ok(CompositionSpec {
-        paths,
-        layout,
-        background_color: cli.background_color,
-    })
-}
-
 fn run(cli: Cli, spec: CompositionSpec) -> Result<PathBuf, String> {
     let format = match cli
         .output
@@ -242,7 +193,7 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    let spec = match build_spec(&cli) {
+    let spec = match CliComposer::compose(&cli) {
         Ok(spec) => spec,
         Err(error) => {
             eprintln!("stitchr: {error}");
@@ -302,96 +253,6 @@ mod tests {
         assert_eq!(cli.output, PathBuf::from("stitched.png"));
         assert!(Cli::try_parse_from(["stitchr"]).is_err());
         assert!(Cli::try_parse_from(["stitchr", "one.png", "--max-size", "100"]).is_err());
-    }
-
-    #[test]
-    fn builds_spec_without_opening_input_images() {
-        let cli = Cli::try_parse_from([
-            "stitchr",
-            "missing-one.png",
-            "missing-two.jpg",
-            "--layout",
-            "grid",
-            "--spacing",
-            "10",
-            "--print-spec",
-        ])
-        .unwrap();
-        let spec = build_spec(&cli).unwrap();
-
-        assert!(cli.print_spec);
-        assert_eq!(
-            spec,
-            CompositionSpec {
-                paths: vec!["missing-one.png".into(), "missing-two.jpg".into()],
-                layout: SpecLayout::Grid {
-                    columns: 2,
-                    spacing: 10,
-                    alignment: Alignment::Start,
-                },
-                background_color: RgbColor::default(),
-            }
-        );
-    }
-
-    #[test]
-    fn freeform_spec_contains_only_positions() {
-        let cli = Cli::try_parse_from([
-            "stitchr",
-            "a.png",
-            "b.png",
-            "--layout",
-            "freeform",
-            "--columns",
-            "5",
-            "--spacing",
-            "40",
-            "--alignment",
-            "end",
-            "--position",
-            "1",
-            "2",
-            "--position",
-            "3",
-            "4",
-        ])
-        .unwrap();
-        let spec = build_spec(&cli).unwrap();
-
-        assert_eq!(
-            spec.layout,
-            SpecLayout::Freeform {
-                positions: vec![SpecPosition { x: 1, y: 2 }, SpecPosition { x: 3, y: 4 }]
-            }
-        );
-        let json = serde_json::to_value(&spec).unwrap();
-        assert_eq!(json["layout"]["type"], "freeform");
-        assert!(json["layout"].get("columns").is_none());
-        assert!(json["layout"].get("spacing").is_none());
-        assert!(json["layout"].get("alignment").is_none());
-    }
-
-    #[test]
-    fn background_argument_uses_the_shared_color_parser() {
-        let named =
-            Cli::try_parse_from(["stitchr", "missing.png", "--background", "rebeccapurple"])
-                .unwrap();
-        let rgb =
-            Cli::try_parse_from(["stitchr", "missing.png", "--background", "rgb(102,51,153)"])
-                .unwrap();
-
-        let named_color = build_spec(&named).unwrap().background_color;
-        let rgb_color = build_spec(&rgb).unwrap().background_color;
-        assert_eq!(named_color, rgb_color);
-        let expected = RgbColor {
-            red: 102,
-            green: 51,
-            blue: 153,
-        };
-        assert_eq!(named_color, expected);
-        assert!(
-            Cli::try_parse_from(["stitchr", "missing.png", "--background", "notacolor"]).is_err()
-        );
     }
 
     #[test]
@@ -478,7 +339,7 @@ mod tests {
             png.to_str().unwrap(),
         ])
         .unwrap();
-        let spec = build_spec(&freeform).unwrap();
+        let spec = CliComposer::compose(&freeform).unwrap();
         assert_eq!(run(freeform, spec).unwrap(), png);
         let result = stitchr_core::load_image(&png).unwrap();
         assert_eq!((result.width(), result.height()), (4, 3));
@@ -495,7 +356,7 @@ mod tests {
             jpeg.to_str().unwrap(),
         ])
         .unwrap();
-        let spec = build_spec(&vertical).unwrap();
+        let spec = CliComposer::compose(&vertical).unwrap();
         assert_eq!(run(vertical, spec).unwrap(), jpeg);
         let result = stitchr_core::load_image(&jpeg).unwrap();
         assert_eq!((result.width(), result.height()), (6, 8));

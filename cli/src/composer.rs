@@ -60,6 +60,32 @@ mod tests {
     use clap::Parser;
     use stitchr_core::RgbColor;
 
+    fn compose_args(args: &[&str]) -> CompositionSpec {
+        let cli =
+            Cli::try_parse_from(std::iter::once("stitchr").chain(args.iter().copied())).unwrap();
+        CliComposer::compose(&cli).unwrap()
+    }
+
+    #[test]
+    fn defaults_and_explicit_zero_spacing_build_the_same_spec() {
+        let default = compose_args(&["image.png"]);
+        let explicit_zero = compose_args(&["image.png", "--spacing", "0"]);
+
+        assert_eq!(
+            default,
+            CompositionSpec {
+                paths: vec!["image.png".into()],
+                layout: SpecLayout::Grid {
+                    columns: 2,
+                    spacing: 0,
+                    alignment: Alignment::Start,
+                },
+                background_color: RgbColor::default(),
+            }
+        );
+        assert_eq!(explicit_zero, default);
+    }
+
     #[test]
     fn builds_spec_without_opening_input_images() {
         let cli = Cli::try_parse_from([
@@ -91,6 +117,114 @@ mod tests {
     }
 
     #[test]
+    fn grid_spec_preserves_spacing_columns_and_alignment() {
+        let spec = compose_args(&[
+            "image.png",
+            "--spacing",
+            "20",
+            "--columns",
+            "5",
+            "--alignment",
+            "end",
+        ]);
+
+        assert_eq!(
+            spec.layout,
+            SpecLayout::Grid {
+                columns: 5,
+                spacing: 20,
+                alignment: Alignment::End,
+            }
+        );
+        assert_eq!(spec.background_color, RgbColor::default());
+    }
+
+    #[test]
+    fn grid_background_and_spacing_are_preserved_for_equivalent_color_forms() {
+        let named = compose_args(&[
+            "image.png",
+            "--spacing",
+            "20",
+            "--background",
+            "rebeccapurple",
+        ]);
+        let rgb = compose_args(&[
+            "image.png",
+            "--spacing",
+            "20",
+            "--background",
+            "rgb(102,51,153)",
+        ]);
+        let custom_background_without_spacing =
+            compose_args(&["image.png", "--background", "rebeccapurple"]);
+
+        assert_eq!(named, rgb);
+        assert_eq!(
+            named.layout,
+            SpecLayout::Grid {
+                columns: 2,
+                spacing: 20,
+                alignment: Alignment::Start,
+            }
+        );
+        assert_eq!(
+            custom_background_without_spacing.layout,
+            SpecLayout::Grid {
+                columns: 2,
+                spacing: 0,
+                alignment: Alignment::Start,
+            }
+        );
+        assert_eq!(
+            named.background_color,
+            RgbColor {
+                red: 102,
+                green: 51,
+                blue: 153,
+            }
+        );
+    }
+
+    #[test]
+    fn stack_specs_preserve_layout_direction_and_spacing_for_one_image() {
+        let horizontal = compose_args(&[
+            "image.png",
+            "--layout",
+            "horizontal",
+            "--spacing",
+            "20",
+            "--alignment",
+            "center",
+        ]);
+        let vertical = compose_args(&[
+            "image.png",
+            "--layout",
+            "vertical",
+            "--spacing",
+            "20",
+            "--alignment",
+            "center",
+        ]);
+
+        assert_eq!(
+            horizontal.layout,
+            SpecLayout::Stack {
+                direction: StackDirection::Horizontal,
+                spacing: 20,
+                alignment: Alignment::Center,
+            }
+        );
+        assert_eq!(
+            vertical.layout,
+            SpecLayout::Stack {
+                direction: StackDirection::Vertical,
+                spacing: 20,
+                alignment: Alignment::Center,
+            }
+        );
+    }
+
+    #[test]
     fn freeform_spec_contains_only_positions() {
         let cli = Cli::try_parse_from([
             "stitchr",
@@ -104,6 +238,8 @@ mod tests {
             "40",
             "--alignment",
             "end",
+            "--background",
+            "rebeccapurple",
             "--position",
             "1",
             "2",
@@ -125,6 +261,52 @@ mod tests {
         assert!(json["layout"].get("columns").is_none());
         assert!(json["layout"].get("spacing").is_none());
         assert!(json["layout"].get("alignment").is_none());
+        assert_eq!(
+            spec.background_color,
+            RgbColor {
+                red: 102,
+                green: 51,
+                blue: 153
+            }
+        );
+    }
+
+    #[test]
+    fn freeform_spec_preserves_origin_and_offset_positions() {
+        let origin = compose_args(&["image.png", "--layout", "freeform", "--position", "0", "0"]);
+        let offset = compose_args(&[
+            "image.png",
+            "--layout",
+            "freeform",
+            "--position",
+            "7",
+            "11",
+            "--spacing",
+            "20",
+            "--alignment",
+            "end",
+        ]);
+
+        assert_eq!(
+            origin.layout,
+            SpecLayout::Freeform {
+                positions: vec![SpecPosition { x: 0, y: 0 }]
+            }
+        );
+        assert_eq!(
+            offset.layout,
+            SpecLayout::Freeform {
+                positions: vec![SpecPosition { x: 7, y: 11 }]
+            }
+        );
+    }
+
+    #[test]
+    fn output_filename_does_not_change_the_composition_spec() {
+        let png = compose_args(&["image.png", "--output", "combined.png"]);
+        let jpeg = compose_args(&["image.png", "--output", "combined.jpg"]);
+
+        assert_eq!(png, jpeg);
     }
 
     #[test]
@@ -148,5 +330,21 @@ mod tests {
         assert!(
             Cli::try_parse_from(["stitchr", "missing.png", "--background", "notacolor"]).is_err()
         );
+    }
+
+    #[test]
+    fn rejects_invalid_numeric_arguments() {
+        assert!(Cli::try_parse_from(["stitchr", "image.png", "--spacing", "-1"]).is_err());
+        assert!(Cli::try_parse_from(["stitchr", "image.png", "--columns", "0"]).is_err());
+        assert!(Cli::try_parse_from([
+            "stitchr",
+            "image.png",
+            "--layout",
+            "freeform",
+            "--position",
+            "0",
+            "invalid",
+        ])
+        .is_err());
     }
 }

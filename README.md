@@ -5,12 +5,12 @@ Combine multiple screenshots into one image — native macOS app with full CLI p
 ## Example
 
 ```
-stitchr img1.png img2.png --layout grid --max-size 2000 --spacing 10
+stitchr img1.png img2.png --layout grid --spacing 10
 ```
 
 ## Architecture
 
-- **`core/`** — Rust crate (`stitchr-core`): image loading, layout algorithms (grid/stack/freeform), spacing/max-size rules, export. Portable, no UI or platform dependencies.
+- **`core/`** — Rust crate (`stitchr-core`): image loading, layout algorithms (grid/stack/freeform), spacing rules, export. Portable, no UI or platform dependencies.
 - **`cli/`** — Rust binary (`stitchr-cli`): thin `clap`-based wrapper over `core`. Same binary runs on macOS and Linux.
 - **`app/`** *(not yet scaffolded)* — SwiftUI macOS app, binds to `stitchr-core` via [UniFFI](https://mozilla.github.io/uniffi-rs/). Drag-drop canvas, live preview, export panel — calls the same engine as the CLI.
 - **AI**: defined as a `SmartLayoutProvider` / `SmartCropProvider` trait in `core`. macOS implementation uses Vision/CoreImage (via a small Swift shim); future Linux (Omarchy) implementation can use a local ONNX/candle model or a cloud API — swappable without touching the core engine or CLI.

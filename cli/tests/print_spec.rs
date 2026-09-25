@@ -28,7 +28,7 @@ fn prints_spec_for_nonexistent_inputs_without_rendering() {
         json!(["/missing/first.png", "/missing/second.jpg"])
     );
     assert!(spec.get("spacing").is_none());
-    assert_eq!(spec["max_size"], Value::Null);
+    assert!(spec.get("max_size").is_none());
     assert_eq!(
         spec["background_color"],
         json!({ "red": 0, "green": 0, "blue": 0 })

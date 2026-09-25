@@ -27,7 +27,7 @@ enum CliAlignment {
     version,
     about = "Combine PNG and JPEG images into one image",
     long_about = "Arrange PNG/JPEG images in a grid, horizontal or vertical stack, or at explicit freeform positions. Output format is selected by the output file extension.",
-    after_help = "Examples:\n  stitchr img1.png img2.png --layout grid --max-size 2000 --spacing 10\n  stitchr img1.png img2.jpg --layout horizontal --alignment center -o combined.jpg\n  stitchr img1.png img2.png --layout freeform --position 0 0 --position 300 80 -o combined.png\n  stitchr img1.png img2.png --background rebeccapurple --print-spec"
+    after_help = "Examples:\n  stitchr img1.png img2.png --layout grid --spacing 10\n  stitchr img1.png img2.jpg --layout horizontal --alignment center -o combined.jpg\n  stitchr img1.png img2.png --layout freeform --position 0 0 --position 300 80 -o combined.png\n  stitchr img1.png img2.png --background rebeccapurple --print-spec"
 )]
 struct Cli {
     #[arg(required_unless_present = "help_json", num_args = 1.., value_name = "IMAGE", help = "Input PNG/JPEG paths (one or more; required unless --help-json/--schema)")]
@@ -59,9 +59,6 @@ struct Cli {
         help = "Align images within cells or across a stack: start, center, end"
     )]
     alignment: CliAlignment,
-
-    #[arg(long, value_parser = clap::value_parser!(u32).range(1..), value_name = "PIXELS", help = "Maximum output width or height (positive integer; default: no limit)")]
-    max_size: Option<u32>,
 
     #[arg(long = "background", default_value_t = RgbColor::default(), value_name = "COLOR", help = "Opaque background: RGB #RRGGBB, rgb(r,g,b), or common color name")]
     background_color: RgbColor,
@@ -214,7 +211,6 @@ fn build_spec(cli: &Cli) -> Result<CompositionSpec, String> {
     Ok(CompositionSpec {
         paths,
         layout,
-        max_size: cli.max_size,
         background_color: cli.background_color,
     })
 }
@@ -291,8 +287,6 @@ mod tests {
             "two.jpg",
             "--layout",
             "grid",
-            "--max-size",
-            "2000",
             "--spacing",
             "10",
         ])
@@ -303,11 +297,11 @@ mod tests {
             [PathBuf::from("one.png"), PathBuf::from("two.jpg")]
         );
         assert_eq!(cli.layout, CliLayout::Grid);
-        assert_eq!(cli.max_size, Some(2000));
         assert_eq!(cli.spacing, 10);
         assert_eq!(cli.columns, 2);
         assert_eq!(cli.output, PathBuf::from("stitched.png"));
         assert!(Cli::try_parse_from(["stitchr"]).is_err());
+        assert!(Cli::try_parse_from(["stitchr", "one.png", "--max-size", "100"]).is_err());
     }
 
     #[test]
@@ -320,8 +314,6 @@ mod tests {
             "grid",
             "--spacing",
             "10",
-            "--max-size",
-            "2000",
             "--print-spec",
         ])
         .unwrap();
@@ -337,7 +329,6 @@ mod tests {
                     spacing: 10,
                     alignment: Alignment::Start,
                 },
-                max_size: Some(2000),
                 background_color: RgbColor::default(),
             }
         );
@@ -445,6 +436,7 @@ mod tests {
         assert_eq!(by_name("background_color")["type"], "string");
         assert_eq!(by_name("background_color")["format"], "color");
         assert_eq!(by_name("background_color")["default"], "#000000");
+        assert!(args.iter().all(|arg| arg["name"] != "max_size"));
         assert_eq!(by_name("position")["repeatable"], true);
         assert_eq!(by_name("position")["values_per_occurrence"]["min"], 2);
         assert_eq!(by_name("help_json")["type"], "boolean");

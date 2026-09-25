@@ -39,7 +39,6 @@ pub fn compose(
             positions: plan.positions,
             width: plan.width,
             height: plan.height,
-            max_size: options.max_size,
             background_color: RgbColor::default(),
         },
     )
@@ -69,13 +68,7 @@ pub fn render_plan(
         pixel.0[3] = 255;
     }
 
-    let composed = DynamicImage::ImageRgba8(canvas);
-    match plan.max_size {
-        Some(max_size) if plan.width.max(plan.height) > max_size => {
-            Ok(composed.resize(max_size, max_size, imageops::FilterType::Lanczos3))
-        }
-        _ => Ok(composed),
-    }
+    Ok(DynamicImage::ImageRgba8(canvas))
 }
 
 pub fn render_spec(
@@ -147,7 +140,6 @@ mod tests {
             positions: vec![(0, 0), (3, 1)],
             width: 4,
             height: 2,
-            max_size: None,
             background_color: RgbColor {
                 red: 12,
                 green: 34,
@@ -175,7 +167,6 @@ mod tests {
                 spacing: 1,
                 alignment: Alignment::Start,
             },
-            max_size: None,
             background_color: RgbColor::default(),
         };
 
@@ -201,7 +192,6 @@ mod tests {
             layout: Layout::Grid { columns: 2 },
             spacing: 1,
             alignment: Alignment::End,
-            max_size: None,
         };
 
         let result = compose(&images, &options).unwrap();
@@ -224,7 +214,6 @@ mod tests {
             },
             spacing: 2,
             alignment: Alignment::Center,
-            max_size: None,
         };
 
         let result = compose(&images, &options).unwrap();
@@ -245,7 +234,6 @@ mod tests {
             },
             spacing: 1,
             alignment: Alignment::End,
-            max_size: None,
         };
 
         let result = compose(&images, &options).unwrap();
@@ -298,7 +286,6 @@ mod tests {
             },
             spacing: 100,
             alignment: Alignment::End,
-            max_size: None,
         };
 
         let result = compose(&images, &options).unwrap();
@@ -308,25 +295,6 @@ mod tests {
         assert_eq!(result.get_pixel(2, 2).0, [0, 255, 0, 255]);
         assert_eq!(result.get_pixel(5, 0).0, [0, 0, 255, 255]);
         assert_eq!(result.get_pixel(0, 0).0, [0, 0, 0, 255]);
-    }
-
-    #[test]
-    fn max_size_limits_longest_side_without_upscaling() {
-        let images = [solid(4, 2, [255, 0, 0, 255]), solid(4, 2, [0, 0, 255, 255])];
-        let options = ComposeOptions {
-            layout: Layout::Stack {
-                direction: StackDirection::Horizontal,
-            },
-            max_size: Some(4),
-            ..ComposeOptions::default()
-        };
-
-        assert_eq!(compose(&images, &options).unwrap().dimensions(), (4, 1));
-        let larger = ComposeOptions {
-            max_size: Some(10),
-            ..options
-        };
-        assert_eq!(compose(&images, &larger).unwrap().dimensions(), (8, 2));
     }
 
     #[test]
@@ -346,15 +314,6 @@ mod tests {
         assert_eq!(
             compose(&images, &invalid_grid).err(),
             Some(ComposeError::InvalidColumns)
-        );
-
-        let invalid_max_size = ComposeOptions {
-            max_size: Some(0),
-            ..ComposeOptions::default()
-        };
-        assert_eq!(
-            compose(&images, &invalid_max_size).err(),
-            Some(ComposeError::InvalidMaxSize)
         );
 
         let missing_positions = ComposeOptions {

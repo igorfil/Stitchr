@@ -19,8 +19,6 @@ struct ContentView: View {
     @State private var alignment: AppAlignment = .start
     @State private var columns = 2
     @State private var spacing = 10
-    @State private var limitOutput = true
-    @State private var maxSize = 2_000
     @State private var format: AppFormat = .png
     @State private var preview: NSImage?
     @State private var previewError: String?
@@ -38,7 +36,6 @@ struct ContentView: View {
                 columns: UInt32(columns),
                 spacing: UInt32(spacing),
                 alignment: alignment,
-                maxSize: limitOutput ? UInt32(maxSize) : nil,
                 positions: images.map(\.position)
             )
         )
@@ -183,10 +180,6 @@ struct ContentView: View {
                 }
             }
 
-            Toggle("Limit output size", isOn: $limitOutput)
-            if limitOutput {
-                Stepper("Longest side: \(maxSize) px", value: $maxSize, in: 100...10_000, step: 100)
-            }
             Picker("Export format", selection: $format) {
                 Text("PNG").tag(AppFormat.png)
                 Text("JPEG").tag(AppFormat.jpeg)
@@ -229,7 +222,7 @@ struct ContentView: View {
             guard !Task.isCancelled else { return }
             do {
                 let data = try await Task.detached(priority: .userInitiated) {
-                    try previewPng(paths: request.paths, options: request.options, previewLimit: 1_200)
+                    try previewPng(paths: request.paths, options: request.options)
                 }.value
                 guard !Task.isCancelled else { return }
                 preview = NSImage(data: data)

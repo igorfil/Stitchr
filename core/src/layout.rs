@@ -37,7 +37,6 @@ pub struct ComposeOptions {
     pub layout: Layout,
     pub spacing: u32,
     pub alignment: Alignment,
-    pub max_size: Option<u32>,
 }
 
 impl Default for ComposeOptions {
@@ -46,7 +45,6 @@ impl Default for ComposeOptions {
             layout: Layout::Grid { columns: 2 },
             spacing: 0,
             alignment: Alignment::Start,
-            max_size: None,
         }
     }
 }
@@ -56,7 +54,6 @@ pub enum ComposeError {
     NoImages,
     InvalidImageDimensions,
     InvalidColumns,
-    InvalidMaxSize,
     ImageCountMismatch { expected: usize, actual: usize },
     FreeformPositionCount { expected: usize, actual: usize },
     SizeOverflow,
@@ -68,7 +65,6 @@ impl fmt::Display for ComposeError {
             Self::NoImages => write!(f, "at least one image is required"),
             Self::InvalidImageDimensions => write!(f, "image dimensions must be nonzero"),
             Self::InvalidColumns => write!(f, "grid columns must be nonzero"),
-            Self::InvalidMaxSize => write!(f, "max size must be nonzero"),
             Self::ImageCountMismatch { expected, actual } => {
                 write!(f, "expected {expected} images, got {actual}")
             }
@@ -98,10 +94,6 @@ pub(crate) fn plan(sizes: &[(u32, u32)], options: &ComposeOptions) -> Result<Pla
     {
         return Err(ComposeError::InvalidImageDimensions);
     }
-    if options.max_size == Some(0) {
-        return Err(ComposeError::InvalidMaxSize);
-    }
-
     let plan = match &options.layout {
         Layout::Grid { columns: 0 } => return Err(ComposeError::InvalidColumns),
         Layout::Grid { columns } => grid(sizes, (*columns).min(sizes.len()), options)?,

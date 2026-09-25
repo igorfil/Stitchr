@@ -38,7 +38,6 @@ pub struct AppOptions {
     pub columns: u32,
     pub spacing: u32,
     pub alignment: AppAlignment,
-    pub max_size: Option<u32>,
     pub positions: Vec<AppPosition>,
 }
 
@@ -54,11 +53,7 @@ pub enum AppError {
     Output { path: String, message: String },
 }
 
-fn render(
-    paths: &[String],
-    options: &AppOptions,
-    preview_limit: Option<u32>,
-) -> Result<DynamicImage, AppError> {
+fn render(paths: &[String], options: &AppOptions) -> Result<DynamicImage, AppError> {
     let images = paths
         .iter()
         .map(|path| {
@@ -91,16 +86,12 @@ fn render(
         AppAlignment::Center => Alignment::Center,
         AppAlignment::End => Alignment::End,
     };
-    let max_size = preview_limit.map_or(options.max_size, |limit| {
-        Some(options.max_size.map_or(limit, |size| size.min(limit)))
-    });
     compose(
         &images,
         &ComposeOptions {
             layout,
             spacing: options.spacing,
             alignment,
-            max_size,
         },
     )
     .map_err(|error| AppError::Composition {
@@ -109,12 +100,13 @@ fn render(
 }
 
 #[uniffi::export]
-pub fn preview_png(
-    paths: Vec<String>,
-    options: AppOptions,
-    preview_limit: u32,
-) -> Result<Vec<u8>, AppError> {
-    let image = render(&paths, &options, Some(preview_limit))?;
+pub fn preview_png(paths: Vec<String>, options: AppOptions) -> Result<Vec<u8>, AppError> {
+    let image = render(&paths, &options)?;
+    let image = if image.width().max(image.height()) > 1_200 {
+        image.resize(1_200, 1_200, image::imageops::FilterType::Lanczos3)
+    } else {
+        image
+    };
     let mut bytes = Cursor::new(Vec::new());
     image
         .write_to(&mut bytes, ImageFormat::Png)
@@ -131,7 +123,7 @@ pub fn export_file(
     destination: String,
     format: AppFormat,
 ) -> Result<(), AppError> {
-    let image = render(&paths, &options, None)?;
+    let image = render(&paths, &options)?;
     let format = match format {
         AppFormat::Png => ExportFormat::Png,
         AppFormat::Jpeg => ExportFormat::Jpeg,
@@ -152,25 +144,24 @@ mod tests {
             columns: 2,
             spacing: 2,
             alignment: AppAlignment::Start,
-            max_size: None,
             positions: Vec::new(),
         }
     }
 
     #[test]
-    fn preview_caps_output_but_export_uses_original_size() {
+    fn preview_is_display_scaled_but_export_uses_original_size() {
         let directory = tempfile::tempdir().unwrap();
         let source = directory.path().join("source.png");
         let target = directory.path().join("result.png");
-        export_image(&DynamicImage::new_rgba8(10, 5), &source, ExportFormat::Png).unwrap();
+        export_image(&DynamicImage::new_rgba8(700, 5), &source, ExportFormat::Png).unwrap();
         let paths = vec![
             source.to_str().unwrap().to_string(),
             source.to_str().unwrap().to_string(),
         ];
 
-        let preview = preview_png(paths.clone(), options(), 11).unwrap();
+        let preview = preview_png(paths.clone(), options()).unwrap();
         let image = image::load_from_memory_with_format(&preview, ImageFormat::Png).unwrap();
-        assert_eq!(image.width(), 11);
+        assert_eq!(image.width(), 1_200);
 
         export_file(
             paths,
@@ -180,13 +171,12 @@ mod tests {
         )
         .unwrap();
         let image = load_image(target).unwrap();
-        assert_eq!((image.width(), image.height()), (26, 9));
+        assert_eq!((image.width(), image.height()), (1_406, 9));
     }
 
     #[test]
     fn reports_input_and_layout_errors() {
-        let error =
-            preview_png(vec!["/missing/stitchr.png".to_owned()], options(), 100).unwrap_err();
+        let error = preview_png(vec!["/missing/stitchr.png".to_owned()], options()).unwrap_err();
         assert!(matches!(error, AppError::Input { .. }));
 
         let directory = tempfile::tempdir().unwrap();
@@ -197,8 +187,7 @@ mod tests {
             layout: AppLayout::Grid,
             ..options()
         };
-        let error =
-            preview_png(vec![source.to_str().unwrap().to_owned()], invalid, 100).unwrap_err();
+        let error = preview_png(vec![source.to_str().unwrap().to_owned()], invalid).unwrap_err();
         assert!(matches!(error, AppError::Composition { .. }));
     }
 }

@@ -29,7 +29,6 @@ pub struct SpecPosition {
 pub struct CompositionSpec {
     pub paths: Vec<String>,
     pub layout: SpecLayout,
-    pub max_size: Option<u32>,
     pub background_color: RgbColor,
 }
 
@@ -38,7 +37,6 @@ pub struct PlacementPlan {
     pub positions: Vec<(u32, u32)>,
     pub width: u32,
     pub height: u32,
-    pub max_size: Option<u32>,
     pub background_color: RgbColor,
 }
 
@@ -90,14 +88,12 @@ pub fn plan_spec(
             layout,
             spacing,
             alignment,
-            max_size: spec.max_size,
         },
     )?;
     Ok(PlacementPlan {
         positions: plan.positions,
         width: plan.width,
         height: plan.height,
-        max_size: spec.max_size,
         background_color: spec.background_color,
     })
 }
@@ -119,7 +115,6 @@ mod tests {
                 spacing: 1,
                 alignment: Alignment::End,
             },
-            max_size: None,
             background_color: RgbColor::default(),
         }
     }
@@ -142,6 +137,7 @@ mod tests {
         assert_eq!(value["paths"][0], "one.png");
         assert_eq!(value["background_color"]["red"], 0);
         assert!(value.get("version").is_none());
+        assert!(value.get("max_size").is_none());
         assert!(value.get("spacing").is_none());
         assert_eq!(
             serde_json::from_value::<CompositionSpec>(value).unwrap(),
@@ -169,7 +165,6 @@ mod tests {
                 spacing: 2,
                 alignment: Alignment::Center,
             },
-            max_size: None,
             background_color: RgbColor::default(),
         };
         let stacked = plan_spec(&stack, &[(2, 1), (1, 3)]).unwrap();
@@ -181,7 +176,6 @@ mod tests {
             layout: SpecLayout::Freeform {
                 positions: vec![SpecPosition { x: 1, y: 2 }, SpecPosition { x: 3, y: 0 }],
             },
-            max_size: None,
             background_color: RgbColor::default(),
         };
         let placed = plan_spec(&freeform, &[(1, 1), (2, 2)]).unwrap();

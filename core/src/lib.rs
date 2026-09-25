@@ -143,6 +143,10 @@ mod tests {
 
     const RED: [u8; 4] = [255, 0, 0, 255];
     const BLUE: [u8; 4] = [0, 0, 255, 255];
+    const GREEN: [u8; 4] = [0, 255, 0, 255];
+    const YELLOW: [u8; 4] = [255, 255, 0, 255];
+    const MAGENTA: [u8; 4] = [255, 0, 255, 255];
+    const CYAN: [u8; 4] = [0, 255, 255, 255];
     const BLACK: [u8; 4] = [0, 0, 0, 255];
     const PURPLE: [u8; 4] = [102, 51, 153, 255];
 
@@ -170,6 +174,23 @@ mod tests {
 
     fn assert_same_image(first: &DynamicImage, second: &DynamicImage) {
         assert_eq!(first.to_rgba8(), second.to_rgba8());
+    }
+
+    fn compose_with(
+        images: &[DynamicImage],
+        layout: Layout,
+        spacing: u32,
+        alignment: Alignment,
+    ) -> DynamicImage {
+        compose(
+            images,
+            &ComposeOptions {
+                layout,
+                spacing,
+                alignment,
+            },
+        )
+        .unwrap()
     }
 
     fn alignment_offset(alignment: Alignment, slack: u32) -> u32 {
@@ -1250,6 +1271,834 @@ mod tests {
             );
         }
         assert_eq!(background_pixel[3], 255);
+    }
+
+    #[test]
+    fn three_single_pixel_images_cover_layouts_and_leave_ragged_grid_cell_empty() {
+        let images = [solid(1, 1, RED), solid(1, 1, BLUE), solid(1, 1, GREEN)];
+
+        let horizontal = compose_with(
+            &images,
+            Layout::Stack {
+                direction: StackDirection::Horizontal,
+            },
+            0,
+            Alignment::Start,
+        );
+        assert_canvas(&horizontal, 3, 1, |x, _| match x {
+            0 => RED,
+            1 => BLUE,
+            _ => GREEN,
+        });
+
+        let vertical = compose_with(
+            &images,
+            Layout::Stack {
+                direction: StackDirection::Vertical,
+            },
+            0,
+            Alignment::Start,
+        );
+        assert_canvas(&vertical, 1, 3, |_, y| match y {
+            0 => RED,
+            1 => BLUE,
+            _ => GREEN,
+        });
+
+        let grid_two_columns =
+            compose_with(&images, Layout::Grid { columns: 2 }, 0, Alignment::Start);
+        assert_canvas(&grid_two_columns, 2, 2, |x, y| match (x, y) {
+            (0, 0) => RED,
+            (1, 0) => BLUE,
+            (0, 1) => GREEN,
+            _ => BLACK,
+        });
+
+        let grid_one_column =
+            compose_with(&images, Layout::Grid { columns: 1 }, 0, Alignment::Start);
+        assert_same_image(&vertical, &grid_one_column);
+
+        let grid_three_columns =
+            compose_with(&images, Layout::Grid { columns: 3 }, 0, Alignment::Start);
+        let grid_many_columns =
+            compose_with(&images, Layout::Grid { columns: 99 }, 0, Alignment::Start);
+        assert_same_image(&horizontal, &grid_three_columns);
+        assert_same_image(&horizontal, &grid_many_columns);
+
+        let freeform = compose_with(
+            &images,
+            Layout::Freeform {
+                positions: vec![(0, 0), (0, 0), (0, 0)],
+            },
+            0,
+            Alignment::Start,
+        );
+        assert_canvas(&freeform, 1, 1, |_, _| GREEN);
+    }
+
+    #[test]
+    fn repeated_path_three_times_is_rendered_three_times() {
+        let directory = tempfile::tempdir().unwrap();
+        let input = directory.path().join("same.png");
+        export_image(&solid(2, 1, RED), &input, ExportFormat::Png).unwrap();
+        let loaded = [
+            load_image_with_metadata(&input).unwrap(),
+            load_image_with_metadata(&input).unwrap(),
+            load_image_with_metadata(&input).unwrap(),
+        ];
+        let metadata = loaded
+            .iter()
+            .map(|image| image.metadata.clone())
+            .collect::<Vec<_>>();
+        let spec = compose_spec(
+            &metadata,
+            &CompositionParams {
+                layout: SpecLayout::Stack {
+                    direction: StackDirection::Horizontal,
+                    spacing: 0,
+                    alignment: Alignment::Start,
+                },
+                background_color: RgbColor::default(),
+            },
+        )
+        .unwrap();
+        let images = loaded
+            .into_iter()
+            .map(|image| image.image)
+            .collect::<Vec<_>>();
+        let result = render_spec(&spec, &images).unwrap();
+
+        assert_canvas(&result, 6, 1, |_, _| RED);
+    }
+
+    #[test]
+    fn three_single_pixel_images_with_spacing_have_two_single_spacing_gaps() {
+        let images = [solid(1, 1, RED), solid(1, 1, BLUE), solid(1, 1, GREEN)];
+        let result = compose_with(
+            &images,
+            Layout::Stack {
+                direction: StackDirection::Horizontal,
+            },
+            20,
+            Alignment::Start,
+        );
+
+        assert_canvas(&result, 83, 41, |x, y| match (x, y) {
+            (20, 20) => RED,
+            (41, 20) => BLUE,
+            (62, 20) => GREEN,
+            _ => BLACK,
+        });
+    }
+
+    #[test]
+    fn freeform_rejects_two_or_four_positions_for_three_images() {
+        let metadata = [
+            ImageMetadata {
+                name: "a.png".into(),
+                width: 1,
+                height: 1,
+            },
+            ImageMetadata {
+                name: "b.png".into(),
+                width: 1,
+                height: 1,
+            },
+            ImageMetadata {
+                name: "c.png".into(),
+                width: 1,
+                height: 1,
+            },
+        ];
+        for (positions, actual) in [
+            (vec![(0, 0), (1, 1)], 2),
+            (vec![(0, 0), (1, 1), (2, 2), (3, 3)], 4),
+        ] {
+            assert_eq!(
+                compose_spec(
+                    &metadata,
+                    &CompositionParams {
+                        layout: SpecLayout::Freeform {
+                            positions: positions
+                                .iter()
+                                .map(|&(x, y)| SpecPosition { x, y })
+                                .collect(),
+                        },
+                        background_color: RgbColor::default(),
+                    }
+                )
+                .err(),
+                Some(ComposeError::FreeformPositionCount {
+                    expected: 3,
+                    actual,
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_image_in_the_middle_is_not_hidden_by_valid_images() {
+        let images = [
+            solid(1, 1, RED),
+            DynamicImage::ImageRgba8(RgbaImage::new(0, 3)),
+            solid(1, 1, BLUE),
+        ];
+
+        assert_eq!(
+            compose(&images, &ComposeOptions::default()).err(),
+            Some(ComposeError::InvalidImageDimensions)
+        );
+    }
+
+    #[test]
+    fn three_image_axis_accumulation_overflow_is_rejected() {
+        let half = u32::MAX / 2;
+        let wide_images = [
+            ImageMetadata {
+                name: "a.png".into(),
+                width: half,
+                height: 1,
+            },
+            ImageMetadata {
+                name: "b.png".into(),
+                width: half,
+                height: 1,
+            },
+            ImageMetadata {
+                name: "c.png".into(),
+                width: half,
+                height: 1,
+            },
+        ];
+        let tall_images = [
+            ImageMetadata {
+                name: "a.png".into(),
+                width: 1,
+                height: half,
+            },
+            ImageMetadata {
+                name: "b.png".into(),
+                width: 1,
+                height: half,
+            },
+            ImageMetadata {
+                name: "c.png".into(),
+                width: 1,
+                height: half,
+            },
+        ];
+
+        assert_eq!(
+            compose_spec(
+                &wide_images,
+                &CompositionParams {
+                    layout: SpecLayout::Stack {
+                        direction: StackDirection::Horizontal,
+                        spacing: 0,
+                        alignment: Alignment::Start,
+                    },
+                    background_color: RgbColor::default(),
+                }
+            )
+            .err(),
+            Some(ComposeError::SizeOverflow)
+        );
+        assert_eq!(
+            compose_spec(
+                &tall_images,
+                &CompositionParams {
+                    layout: SpecLayout::Grid {
+                        columns: 1,
+                        spacing: 0,
+                        alignment: Alignment::Start,
+                    },
+                    background_color: RgbColor::default(),
+                }
+            )
+            .err(),
+            Some(ComposeError::SizeOverflow)
+        );
+    }
+
+    #[test]
+    fn horizontal_stack_aligns_each_of_three_images_independently() {
+        let images = [solid(4, 2, RED), solid(2, 4, BLUE), solid(6, 1, GREEN)];
+        for alignment in [Alignment::Start, Alignment::Center, Alignment::End] {
+            let a_offset = alignment_offset(alignment, 2);
+            let c_offset = alignment_offset(alignment, 3);
+            let result = compose_with(
+                &images,
+                Layout::Stack {
+                    direction: StackDirection::Horizontal,
+                },
+                0,
+                alignment,
+            );
+
+            assert_canvas(&result, 12, 4, |x, y| {
+                if x < 4 && (a_offset..a_offset + 2).contains(&y) {
+                    RED
+                } else if (4..6).contains(&x) {
+                    BLUE
+                } else if x >= 6 && y == c_offset {
+                    GREEN
+                } else {
+                    BLACK
+                }
+            });
+        }
+    }
+
+    #[test]
+    fn vertical_stack_aligns_each_of_three_images_independently() {
+        let images = [solid(4, 2, RED), solid(2, 4, BLUE), solid(6, 1, GREEN)];
+        for alignment in [Alignment::Start, Alignment::Center, Alignment::End] {
+            let a_offset = alignment_offset(alignment, 2);
+            let b_offset = alignment_offset(alignment, 4);
+            let result = compose_with(
+                &images,
+                Layout::Stack {
+                    direction: StackDirection::Vertical,
+                },
+                0,
+                alignment,
+            );
+
+            assert_canvas(&result, 6, 7, |x, y| {
+                if y < 2 && (a_offset..a_offset + 4).contains(&x) {
+                    RED
+                } else if (2..6).contains(&y) && (b_offset..b_offset + 2).contains(&x) {
+                    BLUE
+                } else if y == 6 {
+                    GREEN
+                } else {
+                    BLACK
+                }
+            });
+        }
+    }
+
+    #[test]
+    fn horizontal_stack_keeps_cross_axis_maximum_in_the_middle() {
+        let images = [solid(2, 4, BLUE), solid(4, 2, RED), solid(6, 1, GREEN)];
+        for alignment in [Alignment::Start, Alignment::Center, Alignment::End] {
+            let a_offset = alignment_offset(alignment, 2);
+            let c_offset = alignment_offset(alignment, 3);
+            let result = compose_with(
+                &images,
+                Layout::Stack {
+                    direction: StackDirection::Horizontal,
+                },
+                0,
+                alignment,
+            );
+
+            assert_canvas(&result, 12, 4, |x, y| {
+                if x < 2 {
+                    BLUE
+                } else if (2..6).contains(&x) && (a_offset..a_offset + 2).contains(&y) {
+                    RED
+                } else if x >= 6 && y == c_offset {
+                    GREEN
+                } else {
+                    BLACK
+                }
+            });
+        }
+    }
+
+    #[test]
+    fn horizontal_stack_keeps_cross_axis_maximum_last() {
+        let images = [solid(4, 2, RED), solid(6, 1, GREEN), solid(2, 4, BLUE)];
+        for alignment in [Alignment::Start, Alignment::Center, Alignment::End] {
+            let a_offset = alignment_offset(alignment, 2);
+            let c_offset = alignment_offset(alignment, 3);
+            let result = compose_with(
+                &images,
+                Layout::Stack {
+                    direction: StackDirection::Horizontal,
+                },
+                0,
+                alignment,
+            );
+
+            assert_canvas(&result, 12, 4, |x, y| {
+                if x < 4 && (a_offset..a_offset + 2).contains(&y) {
+                    RED
+                } else if (4..10).contains(&x) && y == c_offset {
+                    GREEN
+                } else if x >= 10 {
+                    BLUE
+                } else {
+                    BLACK
+                }
+            });
+        }
+    }
+
+    #[test]
+    fn spacing_with_three_images_preserves_margins_gaps_and_alignment_offsets() {
+        let images = [solid(4, 2, RED), solid(2, 4, BLUE), solid(6, 1, GREEN)];
+        let result = compose_with(
+            &images,
+            Layout::Stack {
+                direction: StackDirection::Horizontal,
+            },
+            3,
+            Alignment::Center,
+        );
+
+        assert_canvas(&result, 24, 10, |x, y| {
+            if (3..7).contains(&x) && (4..6).contains(&y) {
+                RED
+            } else if (10..12).contains(&x) && (3..7).contains(&y) {
+                BLUE
+            } else if (15..21).contains(&x) && y == 4 {
+                GREEN
+            } else {
+                BLACK
+            }
+        });
+    }
+
+    #[test]
+    fn ragged_two_column_grid_uses_column_and_row_maxima() {
+        let images = [solid(4, 2, RED), solid(2, 4, BLUE), solid(6, 1, GREEN)];
+        let result = compose_with(&images, Layout::Grid { columns: 2 }, 0, Alignment::Start);
+
+        assert_canvas(&result, 8, 5, |x, y| {
+            if x < 4 && y < 2 {
+                RED
+            } else if (6..8).contains(&x) && y < 4 {
+                BLUE
+            } else if x < 6 && y == 4 {
+                GREEN
+            } else {
+                BLACK
+            }
+        });
+    }
+
+    #[test]
+    fn ragged_grid_alignment_shifts_within_each_cell() {
+        let images = [solid(4, 2, RED), solid(2, 4, BLUE), solid(6, 1, GREEN)];
+        for alignment in [Alignment::Start, Alignment::Center, Alignment::End] {
+            let offset = alignment_offset(alignment, 2);
+            let result = compose_with(&images, Layout::Grid { columns: 2 }, 0, alignment);
+
+            assert_canvas(&result, 8, 5, |x, y| {
+                if (offset..offset + 4).contains(&x) && (offset..offset + 2).contains(&y) {
+                    RED
+                } else if (6..8).contains(&x) && y < 4 {
+                    BLUE
+                } else if x < 6 && y == 4 {
+                    GREEN
+                } else {
+                    BLACK
+                }
+            });
+        }
+    }
+
+    #[test]
+    fn ragged_grid_spacing_fills_inter_cell_gaps_and_empty_cells() {
+        let images = [solid(4, 2, RED), solid(2, 4, BLUE), solid(6, 1, GREEN)];
+        let result = compose_with(&images, Layout::Grid { columns: 2 }, 2, Alignment::Start);
+
+        assert_canvas(&result, 14, 11, |x, y| {
+            if (2..6).contains(&x) && (2..4).contains(&y) {
+                RED
+            } else if (10..12).contains(&x) && (2..6).contains(&y) {
+                BLUE
+            } else if (2..8).contains(&x) && y == 8 {
+                GREEN
+            } else {
+                BLACK
+            }
+        });
+    }
+
+    #[test]
+    fn five_image_two_column_grid_uses_each_row_height() {
+        let images = [
+            solid(2, 1, RED),
+            solid(1, 2, BLUE),
+            solid(3, 1, GREEN),
+            solid(1, 4, YELLOW),
+            solid(2, 2, MAGENTA),
+        ];
+        let result = compose_with(&images, Layout::Grid { columns: 2 }, 0, Alignment::Start);
+
+        assert_canvas(&result, 4, 8, |x, y| {
+            if x < 2 && y == 0 {
+                RED
+            } else if x == 3 && y < 2 {
+                BLUE
+            } else if x < 3 && y == 2 {
+                GREEN
+            } else if x == 3 && (2..6).contains(&y) {
+                YELLOW
+            } else if x < 2 && (6..8).contains(&y) {
+                MAGENTA
+            } else {
+                BLACK
+            }
+        });
+    }
+
+    #[test]
+    fn five_image_three_column_grid_leaves_last_column_empty_in_final_row() {
+        let images = [
+            solid(2, 2, RED),
+            solid(3, 1, BLUE),
+            solid(5, 1, GREEN),
+            solid(4, 2, YELLOW),
+            solid(1, 3, MAGENTA),
+        ];
+        let result = compose_with(&images, Layout::Grid { columns: 3 }, 0, Alignment::Start);
+
+        assert_canvas(&result, 12, 5, |x, y| {
+            if x < 2 && y < 2 {
+                RED
+            } else if (4..7).contains(&x) && y == 0 {
+                BLUE
+            } else if (7..12).contains(&x) && y == 0 {
+                GREEN
+            } else if x < 4 && (2..4).contains(&y) {
+                YELLOW
+            } else if x == 4 && (2..5).contains(&y) {
+                MAGENTA
+            } else {
+                BLACK
+            }
+        });
+    }
+
+    #[test]
+    fn four_image_three_column_grid_leaves_two_final_cells_empty() {
+        let images = [
+            solid(1, 1, RED),
+            solid(2, 1, BLUE),
+            solid(3, 1, GREEN),
+            solid(4, 2, YELLOW),
+        ];
+        let result = compose_with(&images, Layout::Grid { columns: 3 }, 0, Alignment::Start);
+
+        assert_canvas(&result, 9, 3, |x, y| {
+            if x == 0 && y == 0 {
+                RED
+            } else if (4..6).contains(&x) && y == 0 {
+                BLUE
+            } else if (6..9).contains(&x) && y == 0 {
+                GREEN
+            } else if x < 4 && (1..3).contains(&y) {
+                YELLOW
+            } else {
+                BLACK
+            }
+        });
+    }
+
+    #[test]
+    fn grids_with_at_least_three_columns_match_horizontal_stack() {
+        let images = [solid(4, 2, RED), solid(2, 4, BLUE), solid(6, 1, GREEN)];
+        for alignment in [Alignment::Start, Alignment::Center, Alignment::End] {
+            let horizontal = compose_with(
+                &images,
+                Layout::Stack {
+                    direction: StackDirection::Horizontal,
+                },
+                0,
+                alignment,
+            );
+            for columns in [3, 4, 100] {
+                let grid = compose_with(&images, Layout::Grid { columns }, 0, alignment);
+                assert_same_image(&horizontal, &grid);
+            }
+        }
+    }
+
+    #[test]
+    fn one_column_grid_matches_vertical_stack_for_three_images() {
+        let images = [solid(4, 2, RED), solid(2, 4, BLUE), solid(6, 1, GREEN)];
+        for alignment in [Alignment::Start, Alignment::Center, Alignment::End] {
+            let vertical = compose_with(
+                &images,
+                Layout::Stack {
+                    direction: StackDirection::Vertical,
+                },
+                0,
+                alignment,
+            );
+            let grid = compose_with(&images, Layout::Grid { columns: 1 }, 0, alignment);
+
+            assert_same_image(&vertical, &grid);
+        }
+    }
+
+    #[test]
+    fn grid_dimensions_change_with_image_order_and_column_maxima() {
+        let base = [solid(4, 2, RED), solid(2, 4, BLUE), solid(6, 1, GREEN)];
+        let cases = [
+            ([0, 1, 2], (8, 5)),
+            ([0, 2, 1], (10, 6)),
+            ([1, 0, 2], (10, 5)),
+            ([1, 2, 0], (10, 6)),
+            ([2, 0, 1], (10, 6)),
+            ([2, 1, 0], (8, 6)),
+        ];
+
+        for (order, expected_dimensions) in cases {
+            let images = order.map(|index| base[index].clone());
+            let result = compose_with(&images, Layout::Grid { columns: 2 }, 0, Alignment::Start);
+            assert_eq!(result.dimensions(), expected_dimensions);
+        }
+    }
+
+    #[test]
+    fn full_two_by_two_grid_places_four_different_images_and_background_slack() {
+        let images = [
+            solid(4, 2, RED),
+            solid(2, 4, BLUE),
+            solid(6, 1, GREEN),
+            solid(3, 3, YELLOW),
+        ];
+        let result = compose_with(&images, Layout::Grid { columns: 2 }, 0, Alignment::Start);
+
+        assert_canvas(&result, 9, 7, |x, y| {
+            if x < 4 && y < 2 {
+                RED
+            } else if (6..8).contains(&x) && y < 4 {
+                BLUE
+            } else if x < 6 && y == 4 {
+                GREEN
+            } else if (6..9).contains(&x) && (4..7).contains(&y) {
+                YELLOW
+            } else {
+                BLACK
+            }
+        });
+    }
+
+    #[test]
+    fn center_alignment_floors_odd_slack_on_both_grid_axes() {
+        let images = [
+            solid(3, 3, RED),
+            solid(2, 4, BLUE),
+            solid(4, 2, GREEN),
+            solid(1, 1, YELLOW),
+        ];
+        let result = compose_with(&images, Layout::Grid { columns: 2 }, 0, Alignment::Center);
+
+        assert_canvas(&result, 6, 6, |x, y| {
+            if x < 3 && y < 3 {
+                RED
+            } else if (4..6).contains(&x) && y < 4 {
+                BLUE
+            } else if x < 4 && (4..6).contains(&y) {
+                GREEN
+            } else if x == 4 && y == 4 {
+                YELLOW
+            } else {
+                BLACK
+            }
+        });
+    }
+
+    #[test]
+    fn six_image_three_column_grid_uses_per_column_and_row_maxima() {
+        let images = [
+            solid(2, 1, RED),
+            solid(3, 2, BLUE),
+            solid(1, 4, GREEN),
+            solid(4, 3, YELLOW),
+            solid(1, 1, MAGENTA),
+            solid(2, 2, CYAN),
+        ];
+        let result = compose_with(&images, Layout::Grid { columns: 3 }, 0, Alignment::Start);
+
+        assert_canvas(&result, 9, 7, |x, y| {
+            if x < 2 && y == 0 {
+                RED
+            } else if (4..7).contains(&x) && (0..2).contains(&y) {
+                BLUE
+            } else if (7..8).contains(&x) && y < 4 {
+                GREEN
+            } else if x < 4 && (4..7).contains(&y) {
+                YELLOW
+            } else if x == 4 && y == 4 {
+                MAGENTA
+            } else if (7..9).contains(&x) && (4..6).contains(&y) {
+                CYAN
+            } else {
+                BLACK
+            }
+        });
+    }
+
+    #[test]
+    fn four_image_grid_order_changes_row_and_column_maxima() {
+        let base = [
+            solid(4, 2, RED),
+            solid(2, 4, BLUE),
+            solid(6, 1, GREEN),
+            solid(1, 6, YELLOW),
+        ];
+        let cases = [([0, 1, 2, 3], (8, 10)), ([0, 2, 1, 3], (10, 8))];
+
+        for (order, expected_dimensions) in cases {
+            let images = order.map(|index| base[index].clone());
+            let result = compose_with(&images, Layout::Grid { columns: 2 }, 0, Alignment::Start);
+            assert_eq!(result.dimensions(), expected_dimensions);
+        }
+    }
+
+    #[test]
+    fn three_image_freeform_chain_overlap_uses_last_image() {
+        let images = [solid(4, 4, RED), solid(4, 4, BLUE), solid(4, 4, GREEN)];
+        let result = compose_with(
+            &images,
+            Layout::Freeform {
+                positions: vec![(0, 0), (2, 2), (4, 4)],
+            },
+            0,
+            Alignment::Start,
+        );
+
+        assert_canvas(&result, 8, 8, |x, y| {
+            if x >= 4 && y >= 4 {
+                GREEN
+            } else if (2..6).contains(&x) && (2..6).contains(&y) {
+                BLUE
+            } else if x < 4 && y < 4 {
+                RED
+            } else {
+                BLACK
+            }
+        });
+    }
+
+    #[test]
+    fn freeform_occludes_middle_image_and_reordering_changes_visible_owner() {
+        let red = solid(4, 4, RED);
+        let blue = solid(2, 2, BLUE);
+        let green = solid(2, 2, GREEN);
+        let positions = vec![(0, 0), (2, 2), (2, 2)];
+        let forward = compose_with(
+            &[red.clone(), blue.clone(), green.clone()],
+            Layout::Freeform {
+                positions: positions.clone(),
+            },
+            0,
+            Alignment::Start,
+        );
+        assert_canvas(
+            &forward,
+            4,
+            4,
+            |x, y| {
+                if x >= 2 && y >= 2 {
+                    GREEN
+                } else {
+                    RED
+                }
+            },
+        );
+
+        let blue_last = compose_with(
+            &[red, green, blue],
+            Layout::Freeform { positions },
+            0,
+            Alignment::Start,
+        );
+        assert_canvas(
+            &blue_last,
+            4,
+            4,
+            |x, y| {
+                if x >= 2 && y >= 2 {
+                    BLUE
+                } else {
+                    RED
+                }
+            },
+        );
+    }
+
+    #[test]
+    fn freeform_canvas_extent_comes_from_different_images_on_each_axis() {
+        let images = [solid(10, 1, RED), solid(1, 10, BLUE), solid(2, 2, GREEN)];
+        let result = compose_with(
+            &images,
+            Layout::Freeform {
+                positions: vec![(5, 0), (0, 7), (3, 3)],
+            },
+            0,
+            Alignment::Start,
+        );
+
+        assert_canvas(&result, 15, 17, |x, y| {
+            if (5..15).contains(&x) && y == 0 {
+                RED
+            } else if x == 0 && (7..17).contains(&y) {
+                BLUE
+            } else if (3..5).contains(&x) && (3..5).contains(&y) {
+                GREEN
+            } else {
+                BLACK
+            }
+        });
+    }
+
+    #[test]
+    fn three_different_sized_images_at_origin_keep_input_paint_order() {
+        let images = [solid(4, 4, RED), solid(2, 2, BLUE), solid(3, 3, GREEN)];
+        let result = compose_with(
+            &images,
+            Layout::Freeform {
+                positions: vec![(0, 0), (0, 0), (0, 0)],
+            },
+            0,
+            Alignment::Start,
+        );
+
+        assert_canvas(
+            &result,
+            4,
+            4,
+            |x, y| {
+                if x < 3 && y < 3 {
+                    GREEN
+                } else {
+                    RED
+                }
+            },
+        );
+    }
+
+    #[test]
+    fn sparse_three_image_freeform_canvas_has_background_between_images() {
+        let images = [solid(2, 2, RED), solid(3, 2, BLUE), solid(1, 4, GREEN)];
+        let result = compose_with(
+            &images,
+            Layout::Freeform {
+                positions: vec![(0, 0), (20, 10), (40, 30)],
+            },
+            0,
+            Alignment::Start,
+        );
+
+        assert_canvas(&result, 41, 34, |x, y| {
+            if x < 2 && y < 2 {
+                RED
+            } else if (20..23).contains(&x) && (10..12).contains(&y) {
+                BLUE
+            } else if x == 40 && (30..34).contains(&y) {
+                GREEN
+            } else {
+                BLACK
+            }
+        });
     }
 
     #[test]

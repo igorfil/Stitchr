@@ -70,6 +70,17 @@ mod tests {
     use clap::Parser;
     use stitchr_core::ImagePlacement;
 
+    fn cli_params(cli: &Cli) -> CliComposeParams<'_> {
+        CliComposeParams {
+            layout: cli.layout,
+            columns: cli.columns,
+            spacing: cli.spacing,
+            alignment: cli.alignment,
+            background_color: cli.background_color,
+            positions: &cli.position,
+        }
+    }
+
     fn compose_cli(cli: &Cli) -> CompositionSpec {
         let images = cli
             .images
@@ -84,18 +95,7 @@ mod tests {
                 height: 2,
             })
             .collect::<Vec<_>>();
-        CliComposer::compose(
-            &images,
-            CliComposeParams {
-                layout: cli.layout,
-                columns: cli.columns,
-                spacing: cli.spacing,
-                alignment: cli.alignment,
-                background_color: cli.background_color,
-                positions: &cli.position,
-            },
-        )
-        .unwrap()
+        CliComposer::compose(&images, cli_params(cli)).unwrap()
     }
 
     fn compose_args(args: &[&str]) -> CompositionSpec {
@@ -339,6 +339,102 @@ mod tests {
                 green: 51,
                 blue: 153
             }
+        );
+    }
+
+    #[test]
+    fn cli_composer_uses_distinct_metadata_for_three_images() {
+        let cli = Cli::try_parse_from([
+            "stitchr",
+            "a.png",
+            "b.png",
+            "c.png",
+            "--layout",
+            "grid",
+            "--columns",
+            "2",
+        ])
+        .unwrap();
+        let images = [
+            ImageMetadata {
+                name: "a.png".into(),
+                width: 4,
+                height: 2,
+            },
+            ImageMetadata {
+                name: "b.png".into(),
+                width: 2,
+                height: 4,
+            },
+            ImageMetadata {
+                name: "c.png".into(),
+                width: 6,
+                height: 1,
+            },
+        ];
+
+        let spec = CliComposer::compose(&images, cli_params(&cli)).unwrap();
+
+        assert_eq!((spec.width, spec.height), (8, 5));
+        assert_eq!(
+            spec.images
+                .iter()
+                .map(|image| (image.name.as_str(), image.position.x, image.position.y))
+                .collect::<Vec<_>>(),
+            [("a.png", 0, 0), ("b.png", 6, 0), ("c.png", 0, 4)]
+        );
+    }
+
+    #[test]
+    fn repeated_freeform_positions_preserve_input_order() {
+        let cli = Cli::try_parse_from([
+            "stitchr",
+            "first.png",
+            "second.png",
+            "third.png",
+            "--layout",
+            "freeform",
+            "--position",
+            "7",
+            "8",
+            "--position",
+            "3",
+            "4",
+            "--position",
+            "1",
+            "2",
+        ])
+        .unwrap();
+        let images = [
+            ImageMetadata {
+                name: "first.png".into(),
+                width: 1,
+                height: 1,
+            },
+            ImageMetadata {
+                name: "second.png".into(),
+                width: 1,
+                height: 1,
+            },
+            ImageMetadata {
+                name: "third.png".into(),
+                width: 1,
+                height: 1,
+            },
+        ];
+
+        let spec = CliComposer::compose(&images, cli_params(&cli)).unwrap();
+
+        assert_eq!(
+            spec.images
+                .iter()
+                .map(|image| (image.name.as_str(), image.position.x, image.position.y))
+                .collect::<Vec<_>>(),
+            [
+                ("first.png", 7, 8),
+                ("second.png", 3, 4),
+                ("third.png", 1, 2)
+            ]
         );
     }
 

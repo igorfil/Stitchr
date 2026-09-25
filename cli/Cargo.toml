@@ -13,4 +13,5 @@ serde_json = "1"
 stitchr-core = { path = "../core" }
 
 [dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 tempfile = "3"

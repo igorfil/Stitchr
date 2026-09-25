@@ -1,10 +1,13 @@
 mod composer;
 
 use clap::{Arg, ArgAction, CommandFactory, Parser, ValueEnum, ValueHint};
-use composer::CliComposer;
+use composer::{CliComposeParams, CliComposer};
 use serde_json::{json, Value};
 use std::{path::PathBuf, process::ExitCode};
-use stitchr_core::{export_image, render_paths, CompositionSpec, ExportFormat, RgbColor};
+use stitchr_core::{
+    export_image, load_image_with_metadata, render_spec, CompositionSpec, DynamicImage,
+    ExportFormat, LoadedImage, RgbColor,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum CliLayout {
@@ -78,7 +81,7 @@ struct Cli {
     #[arg(long = "help-json", visible_alias = "schema", action = ArgAction::SetTrue, help = "Print the full CLI specification as JSON (boolean; default: false)")]
     help_json: bool,
 
-    #[arg(long = "print-spec", action = ArgAction::SetTrue, help = "Print the composition spec as JSON without loading images (boolean; default: false)")]
+    #[arg(long = "print-spec", action = ArgAction::SetTrue, help = "Print the composition spec as JSON after loading inputs (boolean; default: false)")]
     print_spec: bool,
 }
 
@@ -166,24 +169,44 @@ fn schema() -> Value {
     })
 }
 
-fn run(cli: Cli, spec: CompositionSpec) -> Result<PathBuf, String> {
-    let format = match cli
-        .output
-        .extension()
-        .and_then(|extension| extension.to_str())
-    {
-        Some(extension) if extension.eq_ignore_ascii_case("png") => ExportFormat::Png,
+fn output_format(output: &std::path::Path) -> Result<ExportFormat, String> {
+    match output.extension().and_then(|extension| extension.to_str()) {
+        Some(extension) if extension.eq_ignore_ascii_case("png") => Ok(ExportFormat::Png),
         Some(extension)
             if extension.eq_ignore_ascii_case("jpg") || extension.eq_ignore_ascii_case("jpeg") =>
         {
-            ExportFormat::Jpeg
+            Ok(ExportFormat::Jpeg)
         }
-        _ => return Err("output filename must end in .png, .jpg, or .jpeg".to_owned()),
-    };
-    let composed = render_paths(&spec).map_err(|error| error.to_string())?;
-    export_image(&composed, &cli.output, format)
-        .map_err(|error| format!("cannot write {}: {error}", cli.output.display()))?;
-    Ok(cli.output)
+        _ => Err("output filename must end in .png, .jpg, or .jpeg".to_owned()),
+    }
+}
+
+fn load_images(paths: &[PathBuf]) -> Result<Vec<LoadedImage>, String> {
+    paths
+        .iter()
+        .map(|path| {
+            load_image_with_metadata(path)
+                .map_err(|error| format!("cannot load {}: {error}", path.display()))
+        })
+        .collect()
+}
+
+fn compose_loaded_images(
+    loaded: &[LoadedImage],
+    params: CliComposeParams<'_>,
+) -> Result<CompositionSpec, String> {
+    let metadata = loaded
+        .iter()
+        .map(|image| image.metadata.clone())
+        .collect::<Vec<_>>();
+    CliComposer::compose(&metadata, params)
+}
+
+fn run(output: PathBuf, composed: DynamicImage) -> Result<PathBuf, String> {
+    let format = output_format(&output)?;
+    export_image(&composed, &output, format)
+        .map_err(|error| format!("cannot write {}: {error}", output.display()))?;
+    Ok(output)
 }
 
 fn main() -> ExitCode {
@@ -193,7 +216,24 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    let spec = match CliComposer::compose(&cli) {
+    let loaded = match load_images(&cli.images) {
+        Ok(images) => images,
+        Err(error) => {
+            eprintln!("stitchr: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let spec = match compose_loaded_images(
+        &loaded,
+        CliComposeParams {
+            layout: cli.layout,
+            columns: cli.columns,
+            spacing: cli.spacing,
+            alignment: cli.alignment,
+            background_color: cli.background_color,
+            positions: &cli.position,
+        },
+    ) {
         Ok(spec) => spec,
         Err(error) => {
             eprintln!("stitchr: {error}");
@@ -213,7 +253,18 @@ fn main() -> ExitCode {
         };
     }
 
-    match run(cli, spec) {
+    let images = loaded
+        .into_iter()
+        .map(|loaded| loaded.image)
+        .collect::<Vec<_>>();
+    let composed = match render_spec(&spec, &images) {
+        Ok(image) => image,
+        Err(error) => {
+            eprintln!("stitchr: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match run(cli.output, composed) {
         Ok(output) => {
             println!("{}", output.display());
             ExitCode::SUCCESS
@@ -339,8 +390,25 @@ mod tests {
             png.to_str().unwrap(),
         ])
         .unwrap();
-        let spec = CliComposer::compose(&freeform).unwrap();
-        assert_eq!(run(freeform, spec).unwrap(), png);
+        let loaded = load_images(&freeform.images).unwrap();
+        let spec = compose_loaded_images(
+            &loaded,
+            CliComposeParams {
+                layout: freeform.layout,
+                columns: freeform.columns,
+                spacing: freeform.spacing,
+                alignment: freeform.alignment,
+                background_color: freeform.background_color,
+                positions: &freeform.position,
+            },
+        )
+        .unwrap();
+        let pixels = loaded
+            .iter()
+            .map(|image| image.image.clone())
+            .collect::<Vec<_>>();
+        let composed = render_spec(&spec, &pixels).unwrap();
+        assert_eq!(run(freeform.output.clone(), composed).unwrap(), png);
         let result = stitchr_core::load_image(&png).unwrap();
         assert_eq!((result.width(), result.height()), (4, 3));
 
@@ -356,8 +424,25 @@ mod tests {
             jpeg.to_str().unwrap(),
         ])
         .unwrap();
-        let spec = CliComposer::compose(&vertical).unwrap();
-        assert_eq!(run(vertical, spec).unwrap(), jpeg);
+        let loaded = load_images(&vertical.images).unwrap();
+        let spec = compose_loaded_images(
+            &loaded,
+            CliComposeParams {
+                layout: vertical.layout,
+                columns: vertical.columns,
+                spacing: vertical.spacing,
+                alignment: vertical.alignment,
+                background_color: vertical.background_color,
+                positions: &vertical.position,
+            },
+        )
+        .unwrap();
+        let pixels = loaded
+            .iter()
+            .map(|image| image.image.clone())
+            .collect::<Vec<_>>();
+        let composed = render_spec(&spec, &pixels).unwrap();
+        assert_eq!(run(vertical.output.clone(), composed).unwrap(), jpeg);
         let result = stitchr_core::load_image(&jpeg).unwrap();
         assert_eq!((result.width(), result.height()), (6, 8));
         assert!(std::fs::read(&jpeg)

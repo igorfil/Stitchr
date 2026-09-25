@@ -1,43 +1,49 @@
-use crate::{Cli, CliAlignment, CliLayout};
-use stitchr_core::{Alignment, CompositionSpec, SpecLayout, SpecPosition, StackDirection};
+use crate::{CliAlignment, CliLayout};
+use stitchr_core::{
+    compose_spec, Alignment, CompositionParams, CompositionSpec, ImageMetadata, RgbColor,
+    SpecLayout, SpecPosition, StackDirection,
+};
 
 pub(crate) struct CliComposer;
 
+pub(crate) struct CliComposeParams<'a> {
+    pub layout: CliLayout,
+    pub columns: u32,
+    pub spacing: u32,
+    pub alignment: CliAlignment,
+    pub background_color: RgbColor,
+    pub positions: &'a [u32],
+}
+
 impl CliComposer {
-    pub(crate) fn compose(cli: &Cli) -> Result<CompositionSpec, String> {
-        let paths = cli
-            .images
-            .iter()
-            .map(|path| {
-                path.to_str()
-                    .map(str::to_owned)
-                    .ok_or_else(|| format!("input path must be UTF-8: {}", path.display()))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let alignment = match cli.alignment {
+    pub(crate) fn compose(
+        images: &[ImageMetadata],
+        cli_params: CliComposeParams<'_>,
+    ) -> Result<CompositionSpec, String> {
+        let alignment = match cli_params.alignment {
             CliAlignment::Start => Alignment::Start,
             CliAlignment::Center => Alignment::Center,
             CliAlignment::End => Alignment::End,
         };
-        let layout = match cli.layout {
+        let layout = match cli_params.layout {
             CliLayout::Grid => SpecLayout::Grid {
-                columns: cli.columns,
-                spacing: cli.spacing,
+                columns: cli_params.columns,
+                spacing: cli_params.spacing,
                 alignment,
             },
             CliLayout::Horizontal => SpecLayout::Stack {
                 direction: StackDirection::Horizontal,
-                spacing: cli.spacing,
+                spacing: cli_params.spacing,
                 alignment,
             },
             CliLayout::Vertical => SpecLayout::Stack {
                 direction: StackDirection::Vertical,
-                spacing: cli.spacing,
+                spacing: cli_params.spacing,
                 alignment,
             },
             CliLayout::Freeform => SpecLayout::Freeform {
-                positions: cli
-                    .position
+                positions: cli_params
+                    .positions
                     .chunks_exact(2)
                     .map(|pair| SpecPosition {
                         x: pair[0],
@@ -46,24 +52,56 @@ impl CliComposer {
                     .collect(),
             },
         };
-        Ok(CompositionSpec {
-            paths,
-            layout,
-            background_color: cli.background_color,
-        })
+        compose_spec(
+            images,
+            &CompositionParams {
+                layout,
+                background_color: cli_params.background_color,
+            },
+        )
+        .map_err(|error| error.to_string())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Cli;
     use clap::Parser;
-    use stitchr_core::RgbColor;
+    use stitchr_core::ImagePlacement;
+
+    fn compose_cli(cli: &Cli) -> CompositionSpec {
+        let images = cli
+            .images
+            .iter()
+            .map(|path| ImageMetadata {
+                name: path
+                    .file_name()
+                    .unwrap_or(path.as_os_str())
+                    .to_string_lossy()
+                    .into_owned(),
+                width: 3,
+                height: 2,
+            })
+            .collect::<Vec<_>>();
+        CliComposer::compose(
+            &images,
+            CliComposeParams {
+                layout: cli.layout,
+                columns: cli.columns,
+                spacing: cli.spacing,
+                alignment: cli.alignment,
+                background_color: cli.background_color,
+                positions: &cli.position,
+            },
+        )
+        .unwrap()
+    }
 
     fn compose_args(args: &[&str]) -> CompositionSpec {
         let cli =
             Cli::try_parse_from(std::iter::once("stitchr").chain(args.iter().copied())).unwrap();
-        CliComposer::compose(&cli).unwrap()
+        compose_cli(&cli)
     }
 
     #[test]
@@ -74,12 +112,17 @@ mod tests {
         assert_eq!(
             default,
             CompositionSpec {
-                paths: vec!["image.png".into()],
+                images: vec![ImagePlacement {
+                    name: "image.png".into(),
+                    position: SpecPosition { x: 0, y: 0 },
+                }],
                 layout: SpecLayout::Grid {
                     columns: 2,
                     spacing: 0,
                     alignment: Alignment::Start,
                 },
+                width: 3,
+                height: 2,
                 background_color: RgbColor::default(),
             }
         );
@@ -99,18 +142,29 @@ mod tests {
             "--print-spec",
         ])
         .unwrap();
-        let spec = CliComposer::compose(&cli).unwrap();
+        let spec = compose_cli(&cli);
 
         assert!(cli.print_spec);
         assert_eq!(
             spec,
             CompositionSpec {
-                paths: vec!["missing-one.png".into(), "missing-two.jpg".into()],
+                images: vec![
+                    ImagePlacement {
+                        name: "missing-one.png".into(),
+                        position: SpecPosition { x: 10, y: 10 },
+                    },
+                    ImagePlacement {
+                        name: "missing-two.jpg".into(),
+                        position: SpecPosition { x: 23, y: 10 },
+                    },
+                ],
                 layout: SpecLayout::Grid {
                     columns: 2,
                     spacing: 10,
                     alignment: Alignment::Start,
                 },
+                width: 36,
+                height: 22,
                 background_color: RgbColor::default(),
             }
         );
@@ -137,6 +191,8 @@ mod tests {
             }
         );
         assert_eq!(spec.background_color, RgbColor::default());
+        assert_eq!((spec.width, spec.height), (43, 42));
+        assert_eq!(spec.images[0].position, SpecPosition { x: 20, y: 20 });
     }
 
     #[test]
@@ -248,7 +304,7 @@ mod tests {
             "4",
         ])
         .unwrap();
-        let spec = CliComposer::compose(&cli).unwrap();
+        let spec = compose_cli(&cli);
         let without_grid_options = compose_args(&[
             "a.png",
             "b.png",
@@ -326,15 +382,11 @@ mod tests {
 
     #[test]
     fn background_argument_uses_the_shared_color_parser() {
-        let named =
-            Cli::try_parse_from(["stitchr", "missing.png", "--background", "rebeccapurple"])
-                .unwrap();
-        let rgb =
-            Cli::try_parse_from(["stitchr", "missing.png", "--background", "rgb(102,51,153)"])
-                .unwrap();
+        let named = compose_args(&["missing.png", "--background", "rebeccapurple"]);
+        let rgb = compose_args(&["missing.png", "--background", "rgb(102,51,153)"]);
 
-        let named_color = CliComposer::compose(&named).unwrap().background_color;
-        let rgb_color = CliComposer::compose(&rgb).unwrap().background_color;
+        let named_color = named.background_color;
+        let rgb_color = rgb.background_color;
         assert_eq!(named_color, rgb_color);
         let expected = RgbColor {
             red: 102,

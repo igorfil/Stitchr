@@ -1,6 +1,7 @@
 use crate::{
-    compose, export_image, load_image, Alignment, ComposeOptions, DynamicImage, ExportFormat,
-    Layout, StackDirection,
+    compose_spec, export_image, load_image_with_metadata, render_spec, Alignment,
+    CompositionParams, DynamicImage, ExportFormat, RgbColor, SpecLayout, SpecPosition,
+    StackDirection,
 };
 use image::ImageFormat;
 use std::io::Cursor;
@@ -54,47 +55,66 @@ pub enum AppError {
 }
 
 fn render(paths: &[String], options: &AppOptions) -> Result<DynamicImage, AppError> {
-    let images = paths
+    let loaded = paths
         .iter()
         .map(|path| {
-            load_image(path).map_err(|error| AppError::Input {
+            load_image_with_metadata(path).map_err(|error| AppError::Input {
                 path: path.clone(),
                 message: error.to_string(),
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let layout = match options.layout {
-        AppLayout::Grid => Layout::Grid {
-            columns: options.columns as usize,
-        },
-        AppLayout::Horizontal => Layout::Stack {
-            direction: StackDirection::Horizontal,
-        },
-        AppLayout::Vertical => Layout::Stack {
-            direction: StackDirection::Vertical,
-        },
-        AppLayout::Freeform => Layout::Freeform {
-            positions: options
-                .positions
-                .iter()
-                .map(|position| (position.x, position.y))
-                .collect(),
-        },
-    };
+    let metadata = loaded
+        .iter()
+        .map(|image| image.metadata.clone())
+        .collect::<Vec<_>>();
     let alignment = match options.alignment {
         AppAlignment::Start => Alignment::Start,
         AppAlignment::Center => Alignment::Center,
         AppAlignment::End => Alignment::End,
     };
-    compose(
-        &images,
-        &ComposeOptions {
-            layout,
+    let layout = match options.layout {
+        AppLayout::Grid => SpecLayout::Grid {
+            columns: options.columns,
             spacing: options.spacing,
             alignment,
         },
+        AppLayout::Horizontal => SpecLayout::Stack {
+            direction: StackDirection::Horizontal,
+            spacing: options.spacing,
+            alignment,
+        },
+        AppLayout::Vertical => SpecLayout::Stack {
+            direction: StackDirection::Vertical,
+            spacing: options.spacing,
+            alignment,
+        },
+        AppLayout::Freeform => SpecLayout::Freeform {
+            positions: options
+                .positions
+                .iter()
+                .map(|position| SpecPosition {
+                    x: position.x,
+                    y: position.y,
+                })
+                .collect(),
+        },
+    };
+    let spec = compose_spec(
+        &metadata,
+        &CompositionParams {
+            layout,
+            background_color: RgbColor::default(),
+        },
     )
     .map_err(|error| AppError::Composition {
+        message: error.to_string(),
+    })?;
+    let images = loaded
+        .into_iter()
+        .map(|loaded| loaded.image)
+        .collect::<Vec<_>>();
+    render_spec(&spec, &images).map_err(|error| AppError::Composition {
         message: error.to_string(),
     })
 }
@@ -137,6 +157,7 @@ pub fn export_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::load_image;
 
     fn options() -> AppOptions {
         AppOptions {

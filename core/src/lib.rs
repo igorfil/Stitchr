@@ -8,7 +8,10 @@ uniffi::setup_scaffolding!();
 pub use color::{ColorParseError, RgbColor};
 pub use image::DynamicImage;
 pub use layout::{Alignment, ComposeError, ComposeOptions, Layout, StackDirection};
-pub use spec::{plan_spec, CompositionSpec, PlacementPlan, SpecLayout, SpecPosition};
+pub use spec::{
+    compose_spec, CompositionParams, CompositionSpec, ImageMetadata, ImagePlacement, PlacementPlan,
+    SpecLayout, SpecPosition,
+};
 
 use image::{imageops, ImageFormat, Rgba, RgbaImage};
 use std::path::Path;
@@ -21,6 +24,28 @@ pub enum ExportFormat {
 
 pub fn load_image(path: impl AsRef<Path>) -> image::ImageResult<DynamicImage> {
     image::open(path)
+}
+
+#[derive(Debug, Clone)]
+pub struct LoadedImage {
+    pub image: DynamicImage,
+    pub metadata: ImageMetadata,
+}
+
+pub fn load_image_with_metadata(path: impl AsRef<Path>) -> image::ImageResult<LoadedImage> {
+    let path = path.as_ref();
+    let image = load_image(path)?;
+    let name = path
+        .file_name()
+        .unwrap_or_else(|| path.as_os_str())
+        .to_string_lossy()
+        .into_owned();
+    let metadata = ImageMetadata {
+        name,
+        width: image.width(),
+        height: image.height(),
+    };
+    Ok(LoadedImage { image, metadata })
 }
 
 pub fn compose(
@@ -75,37 +100,23 @@ pub fn render_spec(
     spec: &CompositionSpec,
     images: &[DynamicImage],
 ) -> Result<DynamicImage, ComposeError> {
-    let dimensions = images
-        .iter()
-        .map(|image| (image.width(), image.height()))
-        .collect::<Vec<_>>();
-    let plan = plan_spec(spec, &dimensions)?;
+    if spec.images.len() != images.len() {
+        return Err(ComposeError::ImageCountMismatch {
+            expected: spec.images.len(),
+            actual: images.len(),
+        });
+    }
+    let plan = PlacementPlan {
+        positions: spec
+            .images
+            .iter()
+            .map(|image| (image.position.x, image.position.y))
+            .collect(),
+        width: spec.width,
+        height: spec.height,
+        background_color: spec.background_color,
+    };
     render_plan(images, &plan)
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum RenderError {
-    #[error("cannot load {path}: {source}")]
-    Input {
-        path: String,
-        source: image::ImageError,
-    },
-    #[error(transparent)]
-    Composition(#[from] ComposeError),
-}
-
-pub fn render_paths(spec: &CompositionSpec) -> Result<DynamicImage, RenderError> {
-    let images = spec
-        .paths
-        .iter()
-        .map(|path| {
-            load_image(path).map_err(|source| RenderError::Input {
-                path: path.clone(),
-                source,
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    render_spec(spec, &images).map_err(RenderError::Composition)
 }
 
 pub fn export_image(
@@ -169,6 +180,30 @@ mod tests {
         }
     }
 
+    fn spec_for(
+        images: &[DynamicImage],
+        layout: SpecLayout,
+        background_color: RgbColor,
+    ) -> CompositionSpec {
+        let metadata = images
+            .iter()
+            .enumerate()
+            .map(|(index, image)| ImageMetadata {
+                name: format!("image-{index}"),
+                width: image.width(),
+                height: image.height(),
+            })
+            .collect::<Vec<_>>();
+        compose_spec(
+            &metadata,
+            &CompositionParams {
+                layout,
+                background_color,
+            },
+        )
+        .unwrap()
+    }
+
     #[test]
     fn renderer_paints_an_explicit_plan_without_planning() {
         let plan = PlacementPlan {
@@ -191,28 +226,57 @@ mod tests {
     }
 
     #[test]
+    fn image_loader_returns_name_and_dimensions_with_pixels() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("source.png");
+        export_image(&solid(7, 3, RED), &path, ExportFormat::Png).unwrap();
+
+        let loaded = load_image_with_metadata(&path).unwrap();
+
+        assert_eq!(loaded.metadata.name, "source.png");
+        assert_eq!((loaded.metadata.width, loaded.metadata.height), (7, 3));
+        assert_eq!(loaded.image.dimensions(), (7, 3));
+    }
+
+    #[test]
     fn backend_renders_a_hand_written_spec_with_in_memory_images() {
-        let spec = CompositionSpec {
-            paths: vec![
-                "no-files-needed-1.png".into(),
-                "no-files-needed-2.png".into(),
-            ],
-            layout: SpecLayout::Stack {
+        let images = [solid(1, 1, RED), solid(1, 1, BLUE)];
+        let spec = spec_for(
+            &images,
+            SpecLayout::Stack {
                 direction: StackDirection::Horizontal,
                 spacing: 1,
                 alignment: Alignment::Start,
             },
-            background_color: RgbColor::default(),
-        };
+            RgbColor::default(),
+        );
 
-        let image = render_spec(
-            &spec,
-            &[solid(1, 1, [255, 0, 0, 255]), solid(1, 1, [0, 0, 255, 255])],
-        )
-        .unwrap();
+        let image = render_spec(&spec, &images).unwrap();
         assert_eq!(image.dimensions(), (5, 3));
         assert_eq!(image.get_pixel(1, 1).0, [255, 0, 0, 255]);
         assert_eq!(image.get_pixel(3, 1).0, [0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn renderer_rejects_image_count_mismatch_in_composition_spec() {
+        let images = [solid(1, 1, RED), solid(1, 1, BLUE)];
+        let spec = spec_for(
+            &images,
+            SpecLayout::Grid {
+                columns: 2,
+                spacing: 0,
+                alignment: Alignment::Start,
+            },
+            RgbColor::default(),
+        );
+
+        assert_eq!(
+            render_spec(&spec, &images[..1]).err(),
+            Some(ComposeError::ImageCountMismatch {
+                expected: 2,
+                actual: 1,
+            })
+        );
     }
 
     #[test]
@@ -337,18 +401,32 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let input = directory.path().join("a.png");
         export_image(&solid(2, 1, RED), &input, ExportFormat::Png).unwrap();
-        let path = input.to_str().unwrap().to_owned();
-        let spec = CompositionSpec {
-            paths: vec![path.clone(), path],
-            layout: SpecLayout::Stack {
-                direction: StackDirection::Horizontal,
-                spacing: 0,
-                alignment: Alignment::Start,
+        let loaded = [
+            load_image_with_metadata(&input).unwrap(),
+            load_image_with_metadata(&input).unwrap(),
+        ];
+        let metadata = loaded
+            .iter()
+            .map(|image| image.metadata.clone())
+            .collect::<Vec<_>>();
+        let spec = compose_spec(
+            &metadata,
+            &CompositionParams {
+                layout: SpecLayout::Stack {
+                    direction: StackDirection::Horizontal,
+                    spacing: 0,
+                    alignment: Alignment::Start,
+                },
+                background_color: RgbColor::default(),
             },
-            background_color: RgbColor::default(),
-        };
+        )
+        .unwrap();
+        let images = loaded
+            .into_iter()
+            .map(|image| image.image)
+            .collect::<Vec<_>>();
 
-        let result = render_paths(&spec).unwrap();
+        let result = render_spec(&spec, &images).unwrap();
 
         assert_canvas(&result, 4, 1, |_, _| RED);
     }
@@ -561,18 +639,32 @@ mod tests {
             Some(ComposeError::SizeOverflow)
         );
 
-        let spec = CompositionSpec {
-            paths: vec!["wide.png".into(), "small.png".into()],
-            layout: SpecLayout::Grid {
-                columns: 2,
-                spacing: 0,
-                alignment: Alignment::Start,
+        let metadata = [
+            ImageMetadata {
+                name: "wide.png".into(),
+                width: u32::MAX,
+                height: 1,
             },
-            background_color: RgbColor::default(),
-        };
+            ImageMetadata {
+                name: "small.png".into(),
+                width: 1,
+                height: 1,
+            },
+        ];
         assert_eq!(
-            plan_spec(&spec, &[(u32::MAX, 1), (1, 1)]),
-            Err(ComposeError::SizeOverflow)
+            compose_spec(
+                &metadata,
+                &CompositionParams {
+                    layout: SpecLayout::Grid {
+                        columns: 2,
+                        spacing: 0,
+                        alignment: Alignment::Start,
+                    },
+                    background_color: RgbColor::default(),
+                }
+            )
+            .err(),
+            Some(ComposeError::SizeOverflow)
         );
     }
 
@@ -1096,19 +1188,19 @@ mod tests {
     #[test]
     fn custom_background_fills_spacing_and_alignment_slack() {
         let images = [solid(4, 2, RED), solid(2, 4, BLUE)];
-        let spec = CompositionSpec {
-            paths: vec!["a.png".into(), "b.png".into()],
-            layout: SpecLayout::Stack {
+        let spec = spec_for(
+            &images,
+            SpecLayout::Stack {
                 direction: StackDirection::Horizontal,
                 spacing: 1,
                 alignment: Alignment::Start,
             },
-            background_color: RgbColor {
+            RgbColor {
                 red: PURPLE[0],
                 green: PURPLE[1],
                 blue: PURPLE[2],
             },
-        };
+        );
         let result = render_spec(&spec, &images).unwrap();
 
         assert_canvas(&result, 9, 6, |x, y| {
@@ -1125,19 +1217,19 @@ mod tests {
     #[test]
     fn jpeg_export_keeps_dimensions_and_approximately_preserves_background() {
         let images = [solid(16, 8, RED), solid(8, 16, BLUE)];
-        let spec = CompositionSpec {
-            paths: vec!["a.png".into(), "b.png".into()],
-            layout: SpecLayout::Stack {
+        let spec = spec_for(
+            &images,
+            SpecLayout::Stack {
                 direction: StackDirection::Horizontal,
                 spacing: 4,
                 alignment: Alignment::Start,
             },
-            background_color: RgbColor {
+            RgbColor {
                 red: PURPLE[0],
                 green: PURPLE[1],
                 blue: PURPLE[2],
             },
-        };
+        );
         let composed = render_spec(&spec, &images).unwrap();
         let directory = tempfile::tempdir().unwrap();
         let output = directory.path().join("result.jpg");

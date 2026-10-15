@@ -2,7 +2,7 @@
 
 Combine PNG and JPEG images into grids, stacks, freeform arrangements, or diagonal split comparisons.
 
-Stitchr is a local image-composition CLI for macOS and Linux, backed by a shared Rust engine. An **experimental macOS app** is included in this repository.
+Stitchr is a local image-composition CLI for macOS and Linux, built for both people and AI agents. Agents get a machine-readable argument schema, layout inspection before rendering, and versioned JSON results with stable error codes. An **experimental macOS app** is included in this repository.
 
 ![A diagonal split comparison of the included light and dark sample images](docs/examples/split.png)
 
@@ -13,13 +13,17 @@ Stitchr is a local image-composition CLI for macOS and Linux, backed by a shared
 You need Git, a current stable [Rust toolchain](https://rustup.rs/), and a native C linker. On macOS, install Xcode Command Line Tools with `xcode-select --install`; on Debian/Ubuntu, install `build-essential`.
 
 ```sh
-git clone https://github.com/igorfil/Stitchr.git
-cd Stitchr
-cargo install --path cli --locked
+cargo install --git https://github.com/igorfil/Stitchr stitchr-cli --locked
 stitchr --help
 ```
 
-Cargo installs `stitchr` into `~/.cargo/bin`; make sure that directory is on your `PATH`.
+Cargo installs `stitchr` into `~/.cargo/bin`; make sure that directory is on your `PATH`. To install from a local checkout instead (for example, to run the cookbook against the included sample images):
+
+```sh
+git clone https://github.com/igorfil/Stitchr.git
+cd Stitchr
+cargo install --path cli --locked
+```
 
 ## Usage
 
@@ -79,7 +83,7 @@ stitchr --json docs/examples/light.png docs/examples/dark.png \
 ```
 
 ```json
-{"schema_version":1,"ok":true,"output":"comparison.png","width":640,"height":400,"format":"png"}
+{"format":"png","height":400,"ok":true,"output":"comparison.png","schema_version":1,"width":640}
 ```
 
 Errors use `{"schema_version":1,"ok":false,"error":{"code":"...","message":"..."}}` and a nonzero exit code. `--json` also wraps spec/schema queries and keeps help and argument errors machine-readable. The [agent guide](docs/agents.md) documents mode combinations, exit codes, recovery, and compatibility rules.
@@ -115,7 +119,12 @@ open target/Stitchr.app
 
 The script builds the Rust library, generates Swift bindings, and creates a locally signed app bundle. It selects a compatible installed SDK automatically; set `STITCHR_SDK` to an SDK name or path to select one explicitly.
 
-Some Swift 6.4 Command Line Tools builds emit linker warnings about missing `Developer` search paths. These paths come from Swift's build engine, not Stitchr's package settings. Use a full Xcode toolchain when available.
+<details>
+<summary>Troubleshooting: linker warnings about missing <code>Developer</code> search paths</summary>
+
+Some Swift 6.4 Command Line Tools builds print `ld: warning: search path '.../CommandLineTools/Developer/...' not found`. Swift's build engine adds these paths, not Stitchr's package settings, and the build still succeeds. A full Xcode toolchain avoids them.
+
+</details>
 
 ## Development
 

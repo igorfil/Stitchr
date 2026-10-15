@@ -45,11 +45,10 @@ impl CliComposer {
             CliLayout::Freeform => SpecLayout::Freeform {
                 positions: cli_params
                     .positions
-                    .chunks_exact(2)
-                    .map(|pair| SpecPosition {
-                        x: pair[0],
-                        y: pair[1],
-                    })
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|&[x, y]| SpecPosition { x, y })
                     .collect(),
             },
             CliLayout::Split => SpecLayout::Split {

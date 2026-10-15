@@ -61,3 +61,23 @@ fn unsupported_output_extension_is_rejected() {
 
     assert_failure_contains(&result, "output filename must end in .png, .jpg, or .jpeg");
 }
+
+#[test]
+fn split_of_differently_sized_images_is_rejected() {
+    let directory = tempfile::tempdir().unwrap();
+    write_input(&directory);
+    export_image(
+        &DynamicImage::new_rgb8(2, 1),
+        directory.path().join("wide.png"),
+        ExportFormat::Png,
+    )
+    .unwrap();
+
+    let result = run_cli(&directory, &["input.png", "wide.png", "--layout", "split"]);
+
+    assert_failure_contains(
+        &result,
+        "split layout requires all images to have the same dimensions",
+    );
+    assert!(!directory.path().join("stitched.png").exists());
+}

@@ -13,6 +13,7 @@ pub(crate) struct CliComposeParams<'a> {
     pub alignment: CliAlignment,
     pub background_color: RgbColor,
     pub positions: &'a [u32],
+    pub divider: u32,
 }
 
 impl CliComposer {
@@ -51,6 +52,9 @@ impl CliComposer {
                     })
                     .collect(),
             },
+            CliLayout::Split => SpecLayout::Split {
+                divider: cli_params.divider,
+            },
         };
         compose_spec(
             images,
@@ -78,6 +82,7 @@ mod tests {
             alignment: cli.alignment,
             background_color: cli.background_color,
             positions: &cli.position,
+            divider: cli.divider,
         }
     }
 
@@ -466,6 +471,26 @@ mod tests {
                 positions: vec![SpecPosition { x: 7, y: 11 }]
             }
         );
+    }
+
+    #[test]
+    fn split_spec_carries_divider_and_places_images_at_origin() {
+        let spec = compose_args(&[
+            "a.png",
+            "b.png",
+            "c.png",
+            "--layout",
+            "split",
+            "--divider",
+            "6",
+        ]);
+
+        assert_eq!(spec.layout, SpecLayout::Split { divider: 6 });
+        assert_eq!((spec.width, spec.height), (3, 2));
+        assert!(spec
+            .images
+            .iter()
+            .all(|image| image.position == SpecPosition { x: 0, y: 0 }));
     }
 
     #[test]

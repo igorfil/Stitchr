@@ -13,7 +13,7 @@ pub use spec::{
     SpecLayout, SpecPosition,
 };
 
-use image::{imageops, ImageFormat, Rgba, RgbaImage};
+use image::{imageops, ImageFormat, Pixel, Rgba, RgbaImage};
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +57,10 @@ pub fn compose(
         .map(|image| (image.width(), image.height()))
         .collect();
     let plan = layout::plan(&sizes, options)?;
+    let background_color = RgbColor::default();
+    if let Layout::Split { divider } = options.layout {
+        return render_split(images, (plan.width, plan.height), divider, background_color);
+    }
 
     render_plan(
         images,
@@ -64,9 +68,38 @@ pub fn compose(
             positions: plan.positions,
             width: plan.width,
             height: plan.height,
-            background_color: RgbColor::default(),
+            background_color,
         },
     )
+}
+
+fn render_split(
+    images: &[DynamicImage],
+    size: (u32, u32),
+    divider: u32,
+    background_color: RgbColor,
+) -> Result<DynamicImage, ComposeError> {
+    if images
+        .iter()
+        .any(|image| (image.width(), image.height()) != size)
+    {
+        return Err(ComposeError::SplitSizeMismatch);
+    }
+    let layers = images
+        .iter()
+        .map(DynamicImage::to_rgba8)
+        .collect::<Vec<_>>();
+    let RgbColor { red, green, blue } = background_color;
+    let background = Rgba([red, green, blue, 255]);
+    let canvas = RgbaImage::from_fn(size.0, size.1, |x, y| {
+        let mut pixel = background;
+        if let Some(index) = layout::split_region((x, y), size, layers.len(), divider) {
+            pixel.blend(layers[index].get_pixel(x, y));
+            pixel.0[3] = 255;
+        }
+        pixel
+    });
+    Ok(DynamicImage::ImageRgba8(canvas))
 }
 
 pub fn render_plan(
@@ -105,6 +138,14 @@ pub fn render_spec(
             expected: spec.images.len(),
             actual: images.len(),
         });
+    }
+    if let SpecLayout::Split { divider } = spec.layout {
+        return render_split(
+            images,
+            (spec.width, spec.height),
+            divider,
+            spec.background_color,
+        );
     }
     let plan = PlacementPlan {
         positions: spec
@@ -2148,6 +2189,167 @@ mod tests {
             compose(&[empty_image], &ComposeOptions::default()).err(),
             Some(ComposeError::InvalidImageDimensions)
         );
+    }
+
+    fn split_spec(
+        images: &[DynamicImage],
+        divider: u32,
+        background_color: RgbColor,
+    ) -> CompositionSpec {
+        spec_for(images, SpecLayout::Split { divider }, background_color)
+    }
+
+    fn count_color(image: &DynamicImage, color: [u8; 4]) -> usize {
+        image
+            .to_rgba8()
+            .pixels()
+            .filter(|pixel| pixel.0 == color)
+            .count()
+    }
+
+    #[test]
+    fn split_overlays_same_size_images_along_a_slanted_diagonal() {
+        let images = [solid(10, 5, RED), solid(10, 5, BLUE)];
+        let spec = split_spec(&images, 0, RgbColor::default());
+
+        assert_eq!((spec.width, spec.height), (10, 5));
+        let result = render_spec(&spec, &images).unwrap();
+        let first_blue_column_per_row = [6, 5, 5, 5, 4];
+        assert_canvas(&result, 10, 5, |x, y| {
+            if x < first_blue_column_per_row[y as usize] {
+                RED
+            } else {
+                BLUE
+            }
+        });
+    }
+
+    #[test]
+    fn split_divides_many_images_into_equal_bands_in_input_order() {
+        let images = [
+            solid(30, 10, RED),
+            solid(30, 10, GREEN),
+            solid(30, 10, BLUE),
+        ];
+        let result = render_spec(&split_spec(&images, 0, RgbColor::default()), &images).unwrap();
+
+        assert_eq!(result.get_pixel(0, 9).0, RED);
+        assert_eq!(result.get_pixel(15, 5).0, GREEN);
+        assert_eq!(result.get_pixel(29, 0).0, BLUE);
+        for color in [RED, GREEN, BLUE] {
+            assert!(count_color(&result, color).abs_diff(100) <= 5);
+        }
+    }
+
+    #[test]
+    fn split_divider_is_painted_with_the_background_color() {
+        let images = [
+            solid(40, 20, RED),
+            solid(40, 20, GREEN),
+            solid(40, 20, BLUE),
+        ];
+        let background = RgbColor {
+            red: 102,
+            green: 51,
+            blue: 153,
+        };
+        let without = render_spec(&split_spec(&images, 0, background), &images).unwrap();
+        let with = render_spec(&split_spec(&images, 4, background), &images).unwrap();
+
+        assert_eq!(count_color(&without, PURPLE), 0);
+        assert!(count_color(&with, PURPLE) > 2 * 20 * 3);
+        assert_eq!(with.get_pixel(0, 19).0, RED);
+        assert_eq!(with.get_pixel(20, 10).0, GREEN);
+        assert_eq!(with.get_pixel(39, 0).0, BLUE);
+        assert!((0..40).any(|x| with.get_pixel(x, 10).0 == PURPLE && x < 20));
+        assert!((0..40).any(|x| with.get_pixel(x, 10).0 == PURPLE && x > 20));
+    }
+
+    #[test]
+    fn split_blends_transparent_pixels_onto_the_background() {
+        let images = [solid(2, 2, [255, 0, 0, 0]), solid(2, 2, [255, 0, 0, 0])];
+        let background = RgbColor {
+            red: 0,
+            green: 255,
+            blue: 0,
+        };
+        let result = render_spec(&split_spec(&images, 0, background), &images).unwrap();
+
+        assert_canvas(&result, 2, 2, |_, _| GREEN);
+    }
+
+    #[test]
+    fn split_of_a_single_image_reproduces_it() {
+        let images = [solid(3, 2, CYAN)];
+        let result = render_spec(&split_spec(&images, 10, RgbColor::default()), &images).unwrap();
+
+        assert_canvas(&result, 3, 2, |_, _| CYAN);
+    }
+
+    #[test]
+    fn split_rejects_images_of_different_sizes() {
+        let images = [solid(2, 2, RED), solid(2, 3, BLUE)];
+        let metadata = images
+            .iter()
+            .map(|image| ImageMetadata {
+                name: "image".into(),
+                width: image.width(),
+                height: image.height(),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            compose_spec(
+                &metadata,
+                &CompositionParams {
+                    layout: SpecLayout::Split { divider: 0 },
+                    background_color: RgbColor::default(),
+                },
+            )
+            .err(),
+            Some(ComposeError::SplitSizeMismatch)
+        );
+        assert_eq!(
+            compose(
+                &images,
+                &ComposeOptions {
+                    layout: Layout::Split { divider: 0 },
+                    ..ComposeOptions::default()
+                },
+            )
+            .err(),
+            Some(ComposeError::SplitSizeMismatch)
+        );
+
+        let spec = split_spec(
+            &[solid(2, 2, RED), solid(2, 2, BLUE)],
+            0,
+            RgbColor::default(),
+        );
+        assert_eq!(
+            render_spec(&spec, &images).err(),
+            Some(ComposeError::SplitSizeMismatch)
+        );
+    }
+
+    #[test]
+    fn legacy_compose_matches_spec_rendering_for_split() {
+        let images = [
+            solid(12, 6, RED),
+            solid(12, 6, YELLOW),
+            solid(12, 6, MAGENTA),
+        ];
+        let composed = compose(
+            &images,
+            &ComposeOptions {
+                layout: Layout::Split { divider: 2 },
+                spacing: 7,
+                alignment: Alignment::End,
+            },
+        )
+        .unwrap();
+        let rendered = render_spec(&split_spec(&images, 2, RgbColor::default()), &images).unwrap();
+
+        assert_same_image(&composed, &rendered);
     }
 
     #[test]

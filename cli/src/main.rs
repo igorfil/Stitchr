@@ -15,6 +15,7 @@ enum CliLayout {
     Horizontal,
     Vertical,
     Freeform,
+    Split,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -29,8 +30,8 @@ enum CliAlignment {
     name = "stitchr",
     version,
     about = "Combine PNG and JPEG images into one image",
-    long_about = "Arrange PNG/JPEG images in a grid, horizontal or vertical stack, or at explicit freeform positions. Output format is selected by the output file extension.",
-    after_help = "Examples:\n  stitchr img1.png img2.png --layout grid --spacing 10\n  stitchr img1.png img2.jpg --layout horizontal --alignment center -o combined.jpg\n  stitchr img1.png img2.png --layout freeform --position 0 0 --position 300 80 -o combined.png\n  stitchr img1.png img2.png --background rebeccapurple --print-spec"
+    long_about = "Arrange PNG/JPEG images in a grid, horizontal or vertical stack, at explicit freeform positions, or as diagonal split slices of same-size images. Output format is selected by the output file extension.",
+    after_help = "Examples:\n  stitchr img1.png img2.png --layout grid --spacing 10\n  stitchr img1.png img2.jpg --layout horizontal --alignment center -o combined.jpg\n  stitchr img1.png img2.png --layout freeform --position 0 0 --position 300 80 -o combined.png\n  stitchr light.png dark.png --layout split --divider 4 --background white -o split.png\n  stitchr img1.png img2.png --background rebeccapurple --print-spec"
 )]
 struct Cli {
     #[arg(required_unless_present = "help_json", num_args = 1.., value_name = "IMAGE", help = "Input PNG/JPEG paths (one or more; required unless --help-json/--schema)")]
@@ -40,7 +41,7 @@ struct Cli {
         long,
         value_enum,
         default_value = "grid",
-        help = "Layout: grid, horizontal stack, vertical stack, or freeform"
+        help = "Layout: grid, horizontal stack, vertical stack, freeform, or diagonal split of same-size images"
     )]
     layout: CliLayout,
 
@@ -68,6 +69,14 @@ struct Cli {
 
     #[arg(long, action = ArgAction::Append, num_args = 2, value_names = ["X", "Y"], help = "Freeform top-left coordinates (nonnegative integers; repeat once per image)")]
     position: Vec<u32>,
+
+    #[arg(
+        long,
+        default_value_t = 0,
+        value_name = "PIXELS",
+        help = "Width of the background-colored line between split images (nonnegative integer; only for split)"
+    )]
+    divider: u32,
 
     #[arg(
         long,
@@ -232,6 +241,7 @@ fn main() -> ExitCode {
             alignment: cli.alignment,
             background_color: cli.background_color,
             positions: &cli.position,
+            divider: cli.divider,
         },
     ) {
         Ok(spec) => spec,
@@ -312,7 +322,7 @@ mod tests {
             .unwrap_err()
             .to_string();
 
-        assert!(help.contains("[possible values: grid, horizontal, vertical, freeform]"));
+        assert!(help.contains("[possible values: grid, horizontal, vertical, freeform, split]"));
         assert!(help.contains("[default: stitched.png]"));
         assert!(help.contains("--position <X> <Y>"));
         assert!(help.contains("Examples:"));
@@ -340,9 +350,11 @@ mod tests {
         assert_eq!(by_name("images")["required"], true);
         assert_eq!(
             by_name("layout")["enum"],
-            json!(["grid", "horizontal", "vertical", "freeform"])
+            json!(["grid", "horizontal", "vertical", "freeform", "split"])
         );
         assert_eq!(by_name("layout")["default"], "grid");
+        assert_eq!(by_name("divider")["type"], "integer");
+        assert_eq!(by_name("divider")["default"], 0);
         assert_eq!(by_name("spacing")["type"], "integer");
         assert_eq!(by_name("spacing")["default"], 0);
         assert_eq!(by_name("background_color")["type"], "string");
@@ -400,6 +412,7 @@ mod tests {
                 alignment: freeform.alignment,
                 background_color: freeform.background_color,
                 positions: &freeform.position,
+                divider: freeform.divider,
             },
         )
         .unwrap();
@@ -434,6 +447,7 @@ mod tests {
                 alignment: vertical.alignment,
                 background_color: vertical.background_color,
                 positions: &vertical.position,
+                divider: vertical.divider,
             },
         )
         .unwrap();

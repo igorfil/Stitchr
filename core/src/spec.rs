@@ -17,6 +17,9 @@ pub enum SpecLayout {
     Freeform {
         positions: Vec<SpecPosition>,
     },
+    Split {
+        divider: u32,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,6 +102,7 @@ pub fn compose_spec(
             0,
             Alignment::Start,
         ),
+        SpecLayout::Split { divider } => (Layout::Split { divider: *divider }, 0, Alignment::Start),
     };
     let plan = layout::plan(
         &dimensions,
@@ -197,6 +201,31 @@ mod tests {
         assert!(value.get("sizes").is_none());
         assert!(value.get("spacing").is_none());
         assert!(value["images"][0].get("width").is_none());
+        assert_eq!(
+            serde_json::from_value::<CompositionSpec>(value).unwrap(),
+            spec
+        );
+    }
+
+    #[test]
+    fn composes_split_spec_with_all_images_at_origin() {
+        let images = [metadata("light.png", 4, 3), metadata("dark.png", 4, 3)];
+        let spec = compose_spec(
+            &images,
+            &CompositionParams {
+                layout: SpecLayout::Split { divider: 2 },
+                background_color: RgbColor::default(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!((spec.width, spec.height), (4, 3));
+        let value = serde_json::to_value(&spec).unwrap();
+        assert_eq!(value["layout"]["type"], "split");
+        assert_eq!(value["layout"]["divider"], 2);
+        assert_eq!(value["images"][1]["name"], "dark.png");
+        assert_eq!(value["images"][1]["position"]["x"], 0);
+        assert_eq!(value["images"][1]["position"]["y"], 0);
         assert_eq!(
             serde_json::from_value::<CompositionSpec>(value).unwrap(),
             spec

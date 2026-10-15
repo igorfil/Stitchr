@@ -5,6 +5,7 @@ pub enum Layout {
     Grid { columns: usize },
     Stack { direction: StackDirection },
     Freeform { positions: Vec<(u32, u32)> },
+    Split { divider: u32 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -56,6 +57,7 @@ pub enum ComposeError {
     InvalidColumns,
     ImageCountMismatch { expected: usize, actual: usize },
     FreeformPositionCount { expected: usize, actual: usize },
+    SplitSizeMismatch,
     SizeOverflow,
 }
 
@@ -70,6 +72,12 @@ impl fmt::Display for ComposeError {
             }
             Self::FreeformPositionCount { expected, actual } => {
                 write!(f, "expected {expected} freeform positions, got {actual}")
+            }
+            Self::SplitSizeMismatch => {
+                write!(
+                    f,
+                    "split layout requires all images to have the same dimensions"
+                )
             }
             Self::SizeOverflow => write!(f, "composition dimensions exceed the supported size"),
         }
@@ -99,8 +107,46 @@ pub(crate) fn plan(sizes: &[(u32, u32)], options: &ComposeOptions) -> Result<Pla
         Layout::Grid { columns } => grid(sizes, (*columns).min(sizes.len()), options)?,
         Layout::Stack { direction } => stack(sizes, *direction, options)?,
         Layout::Freeform { positions } => return freeform(sizes, positions),
+        Layout::Split { .. } => return split(sizes),
     };
     with_padding(plan, options.spacing)
+}
+
+fn split(sizes: &[(u32, u32)]) -> Result<Plan, ComposeError> {
+    let (width, height) = sizes[0];
+    if sizes.iter().any(|&size| size != (width, height)) {
+        return Err(ComposeError::SplitSizeMismatch);
+    }
+    Ok(Plan {
+        positions: vec![(0, 0); sizes.len()],
+        width,
+        height,
+    })
+}
+
+/// Returns the index of the image visible at pixel `(x, y)`, or `None` for divider pixels.
+///
+/// The canvas is cut into `count` equal bands by parallel "/" diagonals that shift
+/// 2 px right for every 5 px up and cross mid-height at `k * width / count`.
+pub(crate) fn split_region(
+    (x, y): (u32, u32),
+    (width, height): (u32, u32),
+    count: usize,
+    divider: u32,
+) -> Option<usize> {
+    let count = count as i64;
+    let band_width = 10 * i64::from(width);
+    // 10 * (pixel-centre x shifted back along the diagonal to mid-height), kept integral for exact bands.
+    let offset = 10 * i64::from(x) + 4 * i64::from(y) + 7 - 2 * i64::from(height);
+    let band = (offset * count).div_euclid(band_width).clamp(0, count - 1);
+    let nearest_boundary = ((offset * count) as f64 / band_width as f64)
+        .round()
+        .clamp(1.0, (count - 1).max(1) as f64);
+    let horizontal_distance =
+        (offset as f64 - nearest_boundary * band_width as f64 / count as f64).abs() / 10.0;
+    let perpendicular_distance = horizontal_distance / (1.0_f64 + 0.4 * 0.4).sqrt();
+    let on_divider = count > 1 && perpendicular_distance < f64::from(divider) / 2.0;
+    (!on_divider).then_some(band as usize)
 }
 
 fn with_padding(plan: Plan, spacing: u32) -> Result<Plan, ComposeError> {

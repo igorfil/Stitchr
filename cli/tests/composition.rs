@@ -139,3 +139,39 @@ fn three_image_spec_tracks_mixed_png_and_jpeg_dimensions_identically() {
     assert!(png_spec.get("sizes").is_none());
     assert!(png_spec.get("max_size").is_none());
 }
+
+#[test]
+fn cli_renders_split_of_same_size_images() {
+    let directory = tempfile::tempdir().unwrap();
+    write_image(&directory, "light.png", 10, 5, [255, 0, 0]);
+    write_image(&directory, "dark.png", 10, 5, [0, 0, 255]);
+
+    let result = run_cli(
+        &directory,
+        &[
+            "light.png",
+            "dark.png",
+            "--layout",
+            "split",
+            "-o",
+            "split.png",
+        ],
+    );
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    let image = image::open(directory.path().join("split.png"))
+        .unwrap()
+        .to_rgba8();
+    let first_blue_column_per_row = [6, 5, 5, 5, 4];
+    assert_canvas(&image, 10, 5, |x, y| {
+        if x < first_blue_column_per_row[y as usize] {
+            [255, 0, 0, 255]
+        } else {
+            [0, 0, 255, 255]
+        }
+    });
+}

@@ -13,7 +13,7 @@ pub use spec::{
     SpecLayout, SpecPosition,
 };
 
-use image::{imageops, ImageFormat, Pixel, Rgba, RgbaImage};
+use image::{imageops, ImageDecoder, ImageFormat, ImageReader, Limits, Pixel, Rgba, RgbaImage};
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,7 +23,14 @@ pub enum ExportFormat {
 }
 
 pub fn load_image(path: impl AsRef<Path>) -> image::ImageResult<DynamicImage> {
-    image::open(path)
+    let mut decoder = ImageReader::open(path)?.into_decoder()?;
+    let mut limits = Limits::default();
+    limits.reserve(decoder.total_bytes())?;
+    decoder.set_limits(limits)?;
+    let orientation = decoder.orientation()?;
+    let mut image = DynamicImage::from_decoder(decoder)?;
+    image.apply_orientation(orientation);
+    Ok(image)
 }
 
 #[derive(Debug, Clone)]
@@ -73,6 +80,27 @@ pub fn compose(
     )
 }
 
+fn new_canvas(width: u32, height: u32, color: RgbColor) -> Result<RgbaImage, ComposeError> {
+    let length = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or(ComposeError::SizeOverflow)?;
+    Limits::default()
+        .reserve_usize(length)
+        .map_err(|_| ComposeError::SizeOverflow)?;
+    let mut pixels = Vec::new();
+    pixels
+        .try_reserve_exact(length)
+        .map_err(|_| ComposeError::SizeOverflow)?;
+    pixels.resize(length, 0);
+    let mut canvas =
+        RgbaImage::from_raw(width, height, pixels).ok_or(ComposeError::SizeOverflow)?;
+    for pixel in canvas.pixels_mut() {
+        *pixel = Rgba([color.red, color.green, color.blue, 255]);
+    }
+    Ok(canvas)
+}
+
 fn render_split(
     images: &[DynamicImage],
     size: (u32, u32),
@@ -85,20 +113,17 @@ fn render_split(
     {
         return Err(ComposeError::SplitSizeMismatch);
     }
+    let mut canvas = new_canvas(size.0, size.1, background_color)?;
     let layers = images
         .iter()
         .map(DynamicImage::to_rgba8)
         .collect::<Vec<_>>();
-    let RgbColor { red, green, blue } = background_color;
-    let background = Rgba([red, green, blue, 255]);
-    let canvas = RgbaImage::from_fn(size.0, size.1, |x, y| {
-        let mut pixel = background;
+    for (x, y, pixel) in canvas.enumerate_pixels_mut() {
         if let Some(index) = layout::split_region((x, y), size, layers.len(), divider) {
             pixel.blend(layers[index].get_pixel(x, y));
             pixel.0[3] = 255;
         }
-        pixel
-    });
+    }
     Ok(DynamicImage::ImageRgba8(canvas))
 }
 
@@ -112,12 +137,7 @@ pub fn render_plan(
             actual: images.len(),
         });
     }
-    let color = plan.background_color;
-    let mut canvas = RgbaImage::from_pixel(
-        plan.width,
-        plan.height,
-        Rgba([color.red, color.green, color.blue, 255]),
-    );
+    let mut canvas = new_canvas(plan.width, plan.height, plan.background_color)?;
     for (image, &(x, y)) in images.iter().zip(&plan.positions) {
         imageops::overlay(&mut canvas, image, i64::from(x), i64::from(y));
     }
@@ -180,7 +200,7 @@ pub fn export_image(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use image::GenericImageView;
+    use image::{GenericImageView, ImageEncoder};
 
     const RED: [u8; 4] = [255, 0, 0, 255];
     const BLUE: [u8; 4] = [0, 0, 255, 255];
@@ -298,6 +318,108 @@ mod tests {
         assert_eq!(loaded.metadata.name, "source.png");
         assert_eq!((loaded.metadata.width, loaded.metadata.height), (7, 3));
         assert_eq!(loaded.image.dimensions(), (7, 3));
+    }
+
+    #[test]
+    fn image_loader_applies_all_exif_orientations_before_measuring() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("oriented.jpg");
+        let source =
+            image::RgbImage::from_fn(3, 2, |x, y| image::Rgb([((y * 3 + x) * 50) as u8; 3]));
+        for (orientation, dimensions, indices) in [
+            (1, (3, 2), [0, 1, 2, 3, 4, 5]),
+            (2, (3, 2), [2, 1, 0, 5, 4, 3]),
+            (3, (3, 2), [5, 4, 3, 2, 1, 0]),
+            (4, (3, 2), [3, 4, 5, 0, 1, 2]),
+            (5, (2, 3), [0, 3, 1, 4, 2, 5]),
+            (6, (2, 3), [3, 0, 4, 1, 5, 2]),
+            (7, (2, 3), [5, 2, 4, 1, 3, 0]),
+            (8, (2, 3), [2, 5, 1, 4, 0, 3]),
+        ] {
+            let mut encoder =
+                image::codecs::jpeg::JpegEncoder::new(std::fs::File::create(&path).unwrap());
+            encoder
+                .set_exif_metadata(vec![
+                    b'I',
+                    b'I',
+                    42,
+                    0,
+                    8,
+                    0,
+                    0,
+                    0,
+                    1,
+                    0,
+                    0x12,
+                    0x01,
+                    3,
+                    0,
+                    1,
+                    0,
+                    0,
+                    0,
+                    orientation,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                ])
+                .unwrap();
+            encoder.encode_image(&source).unwrap();
+            drop(encoder);
+            let raw = image::open(&path).unwrap();
+            let loaded = load_image_with_metadata(&path).unwrap();
+
+            assert_eq!((loaded.metadata.width, loaded.metadata.height), dimensions);
+            assert_eq!(loaded.image.dimensions(), dimensions);
+            let expected = indices.map(|index| raw.get_pixel(index % 3, index / 3));
+            assert_eq!(
+                loaded
+                    .image
+                    .to_rgba8()
+                    .pixels()
+                    .copied()
+                    .collect::<Vec<_>>(),
+                expected,
+                "EXIF orientation {orientation}"
+            );
+        }
+    }
+
+    #[test]
+    fn renderers_reject_canvas_overflow_and_excessive_allocations() {
+        let images = [solid(1, 1, RED)];
+        for (width, height) in [(u32::MAX, u32::MAX), (16_384, 16_384), (u32::MAX, 1)] {
+            let plan = PlacementPlan {
+                positions: vec![(0, 0)],
+                width,
+                height,
+                background_color: RgbColor::default(),
+            };
+            assert_eq!(
+                render_plan(&images, &plan).err(),
+                Some(ComposeError::SizeOverflow)
+            );
+
+            let mut spec = spec_for(
+                &images,
+                SpecLayout::Grid {
+                    columns: 1,
+                    spacing: 0,
+                    alignment: Alignment::Start,
+                },
+                RgbColor::default(),
+            );
+            spec.width = width;
+            spec.height = height;
+            assert_eq!(
+                render_spec(&spec, &images).err(),
+                Some(ComposeError::SizeOverflow)
+            );
+        }
     }
 
     #[test]

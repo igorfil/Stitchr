@@ -209,7 +209,8 @@ struct ContentView: View {
     }
 
     private func refreshPreview(_ request: PreviewRequest) {
-        renderTask?.cancel()
+        let previousTask = renderTask
+        previousTask?.cancel()
         guard !request.paths.isEmpty else {
             preview = nil
             previewError = nil
@@ -218,6 +219,8 @@ struct ContentView: View {
         }
         isRendering = true
         renderTask = Task {
+            // Cancellation cannot interrupt a synchronous Rust render.
+            await previousTask?.value
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled else { return }
             do {

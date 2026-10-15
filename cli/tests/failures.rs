@@ -81,3 +81,28 @@ fn split_of_differently_sized_images_is_rejected() {
     );
     assert!(!directory.path().join("stitched.png").exists());
 }
+
+#[test]
+fn excessive_canvas_sizes_are_reported_without_panicking() {
+    let directory = tempfile::tempdir().unwrap();
+    write_input(&directory);
+
+    for args in [
+        vec!["input.png", "--spacing", "2147483647"],
+        vec!["input.png", "--spacing", "10000"],
+        vec![
+            "input.png",
+            "--layout",
+            "freeform",
+            "--position",
+            "4294967294",
+            "0",
+        ],
+    ] {
+        let result = run_cli(&directory, &args);
+
+        assert_eq!(result.status.code(), Some(1));
+        assert_failure_contains(&result, "composition dimensions exceed the supported size");
+        assert!(!directory.path().join("stitched.png").exists());
+    }
+}

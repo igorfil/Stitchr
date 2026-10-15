@@ -26,7 +26,7 @@ struct ContentView: View {
     @State private var isDropTarget = false
     @State private var isRendering = false
     @State private var isExporting = false
-    @State private var renderTask: Task<Void, Never>?
+    @State private var previewScheduler = PreviewScheduler()
 
     private var request: PreviewRequest {
         PreviewRequest(
@@ -83,7 +83,7 @@ struct ContentView: View {
         }
         .onAppear { refreshPreview(request) }
         .onChange(of: request) { _, newValue in refreshPreview(newValue) }
-        .onDisappear { renderTask?.cancel() }
+        .onDisappear { previewScheduler.cancel() }
     }
 
     private var sidebar: some View {
@@ -209,8 +209,7 @@ struct ContentView: View {
     }
 
     private func refreshPreview(_ request: PreviewRequest) {
-        let previousTask = renderTask
-        previousTask?.cancel()
+        previewScheduler.cancel()
         guard !request.paths.isEmpty else {
             preview = nil
             previewError = nil
@@ -218,9 +217,7 @@ struct ContentView: View {
             return
         }
         isRendering = true
-        renderTask = Task {
-            // Cancellation cannot interrupt a synchronous Rust render.
-            await previousTask?.value
+        previewScheduler.schedule {
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled else { return }
             do {

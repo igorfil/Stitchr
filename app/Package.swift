@@ -17,5 +17,6 @@ let package = Package(
             path: "Sources/Stitchr",
             linkerSettings: [.unsafeFlags([archive])]
         ),
+        .testTarget(name: "StitchrTests", dependencies: ["Stitchr"]),
     ]
 )

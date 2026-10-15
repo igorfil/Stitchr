@@ -1,0 +1,147 @@
+{
+  "schema_version": 1,
+  "working_directory": "repository_root",
+  "inputs": [
+    "docs/examples/light.png",
+    "docs/examples/dark.png",
+    "docs/examples/overlay.png"
+  ],
+  "cases": [
+    {
+      "id": "grid",
+      "description": "Arrange three screenshots in a two-column grid with an empty final cell.",
+      "constraints": ["Grid columns must be positive.", "Spacing includes outer margins."],
+      "args": [
+        "--json", "docs/examples/light.png", "docs/examples/dark.png", "docs/examples/light.png",
+        "--layout", "grid", "--columns", "2", "--spacing", "12",
+        "--background", "#e2e8f0", "--output", "grid.png"
+      ],
+      "expected": {
+        "output": "grid.png", "width": 1316, "height": 836, "format": "png",
+        "reference": "docs/examples/grid.png", "reference_tolerance": 0,
+        "pixels": [
+          { "x": 0, "y": 0, "rgba": [226, 232, 240, 255], "tolerance": 0 },
+          { "x": 612, "y": 362, "rgba": [247, 249, 253, 255], "tolerance": 0 },
+          { "x": 1264, "y": 362, "rgba": [21, 29, 46, 255], "tolerance": 0 },
+          { "x": 700, "y": 500, "rgba": [226, 232, 240, 255], "tolerance": 0 }
+        ]
+      }
+    },
+    {
+      "id": "horizontal",
+      "description": "Center a short transparent image beside a taller screenshot.",
+      "constraints": ["Alignment acts on the vertical axis for a horizontal stack."],
+      "args": [
+        "--json", "docs/examples/light.png", "docs/examples/overlay.png",
+        "--layout", "horizontal", "--alignment", "center", "--spacing", "16",
+        "--output", "horizontal.png"
+      ],
+      "expected": {
+        "output": "horizontal.png", "width": 816, "height": 432, "format": "png",
+        "reference": "docs/examples/horizontal.png", "reference_tolerance": 0,
+        "pixels": [
+          { "x": 0, "y": 0, "rgba": [0, 0, 0, 255], "tolerance": 0 },
+          { "x": 616, "y": 366, "rgba": [247, 249, 253, 255], "tolerance": 0 },
+          { "x": 700, "y": 100, "rgba": [0, 0, 0, 255], "tolerance": 0 },
+          { "x": 732, "y": 216, "rgba": [128, 64, 192, 255], "tolerance": 0 }
+        ]
+      }
+    },
+    {
+      "id": "vertical",
+      "description": "Stack two screenshots vertically with white spacing and margins.",
+      "constraints": ["Images remain at their original pixel dimensions."],
+      "args": [
+        "--json", "docs/examples/light.png", "docs/examples/dark.png",
+        "--layout", "vertical", "--spacing", "16", "--background", "white",
+        "--output", "vertical.png"
+      ],
+      "expected": {
+        "output": "vertical.png", "width": 672, "height": 848, "format": "png",
+        "reference": "docs/examples/vertical.png", "reference_tolerance": 0,
+        "pixels": [
+          { "x": 0, "y": 0, "rgba": [255, 255, 255, 255], "tolerance": 0 },
+          { "x": 616, "y": 366, "rgba": [247, 249, 253, 255], "tolerance": 0 },
+          { "x": 616, "y": 782, "rgba": [21, 29, 46, 255], "tolerance": 0 }
+        ]
+      }
+    },
+    {
+      "id": "freeform",
+      "description": "Overlap screenshots at explicit coordinates; the later input appears on top.",
+      "constraints": ["Provide one nonnegative X/Y pair per input.", "Spacing and alignment are ignored."],
+      "args": [
+        "--json", "docs/examples/light.png", "docs/examples/dark.png",
+        "--layout", "freeform", "--position", "0", "0", "--position", "240", "120",
+        "--output", "freeform.png"
+      ],
+      "expected": {
+        "output": "freeform.png", "width": 880, "height": 520, "format": "png",
+        "reference": "docs/examples/freeform.png", "reference_tolerance": 0,
+        "pixels": [
+          { "x": 600, "y": 80, "rgba": [247, 249, 253, 255], "tolerance": 0 },
+          { "x": 300, "y": 130, "rgba": [34, 45, 66, 255], "tolerance": 0 },
+          { "x": 800, "y": 470, "rgba": [21, 29, 46, 255], "tolerance": 0 },
+          { "x": 100, "y": 470, "rgba": [0, 0, 0, 255], "tolerance": 0 }
+        ]
+      }
+    },
+    {
+      "id": "split",
+      "description": "Compare light and dark screenshots along a diagonal with a white divider.",
+      "constraints": ["All inputs must have identical dimensions.", "The output retains the input dimensions."],
+      "args": [
+        "--json", "docs/examples/light.png", "docs/examples/dark.png",
+        "--layout", "split", "--divider", "4", "--background", "white",
+        "--output", "split.png"
+      ],
+      "expected": {
+        "output": "split.png", "width": 640, "height": 400, "format": "png",
+        "reference": "docs/examples/split.png", "reference_tolerance": 0,
+        "pixels": [
+          { "x": 0, "y": 0, "rgba": [228, 234, 244, 255], "tolerance": 0 },
+          { "x": 600, "y": 350, "rgba": [21, 29, 46, 255], "tolerance": 0 },
+          { "x": 320, "y": 200, "rgba": [255, 255, 255, 255], "tolerance": 0 }
+        ]
+      }
+    },
+    {
+      "id": "background",
+      "description": "Flatten a transparent image onto a custom RGB background with a border.",
+      "constraints": ["Backgrounds and output are opaque.", "Quote hex colors when invoking through a shell."],
+      "args": [
+        "--json", "docs/examples/overlay.png", "--spacing", "16",
+        "--background", "#e2e8f0", "--output", "background.png"
+      ],
+      "expected": {
+        "output": "background.png", "width": 160, "height": 112, "format": "png",
+        "reference": "docs/examples/background.png", "reference_tolerance": 0,
+        "pixels": [
+          { "x": 0, "y": 0, "rgba": [226, 232, 240, 255], "tolerance": 0 },
+          { "x": 20, "y": 20, "rgba": [226, 232, 240, 255], "tolerance": 0 },
+          { "x": 32, "y": 32, "rgba": [176, 147, 215, 255], "tolerance": 0 },
+          { "x": 60, "y": 56, "rgba": [128, 64, 192, 255], "tolerance": 0 }
+        ]
+      }
+    },
+    {
+      "id": "jpeg",
+      "description": "Export a side-by-side comparison as JPEG by selecting a .jpg output path.",
+      "constraints": ["JPEG is lossy; pixel comparisons need a tolerance."],
+      "args": [
+        "--json", "docs/examples/light.png", "docs/examples/dark.png",
+        "--layout", "horizontal", "--spacing", "16", "--background", "white",
+        "--output", "combined.jpg"
+      ],
+      "expected": {
+        "output": "combined.jpg", "width": 1328, "height": 432, "format": "jpeg",
+        "reference": "docs/examples/combined.jpg", "reference_tolerance": 3,
+        "pixels": [
+          { "x": 4, "y": 4, "rgba": [255, 255, 255, 255], "tolerance": 12 },
+          { "x": 616, "y": 366, "rgba": [247, 249, 253, 255], "tolerance": 20 },
+          { "x": 1272, "y": 366, "rgba": [21, 29, 46, 255], "tolerance": 20 }
+        ]
+      }
+    }
+  ]
+}

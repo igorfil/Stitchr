@@ -29,6 +29,7 @@ fn prints_resolved_spec_with_loaded_image_metadata() {
 
     assert!(result.status.success());
     let spec: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(spec["schema_version"], 1);
     assert!(spec.get("version").is_none());
     assert_eq!(spec["layout"]["type"], "stack");
     assert_eq!(spec["layout"]["direction"], "vertical");

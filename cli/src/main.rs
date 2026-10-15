@@ -1,13 +1,17 @@
 mod composer;
+mod error;
 
 use clap::{Arg, ArgAction, CommandFactory, Parser, ValueEnum, ValueHint};
 use composer::{CliComposeParams, CliComposer};
+use error::CliError;
 use serde_json::{json, Value};
 use std::{path::PathBuf, process::ExitCode};
 use stitchr_core::{
     export_image, load_image_with_metadata, render_spec, CompositionSpec, DynamicImage,
     ExportFormat, LoadedImage, RgbColor,
 };
+
+const SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum CliLayout {
@@ -92,6 +96,9 @@ struct Cli {
 
     #[arg(long = "print-spec", action = ArgAction::SetTrue, help = "Print the composition spec as JSON after loading inputs (boolean; default: false)")]
     print_spec: bool,
+
+    #[arg(long, action = ArgAction::SetTrue, help = "Print versioned JSON results and errors to stdout")]
+    json: bool,
 }
 
 fn argument_schema(arg: &Arg) -> Value {
@@ -169,6 +176,7 @@ fn schema() -> Value {
         .collect::<Vec<_>>();
 
     json!({
+        "schema_version": SCHEMA_VERSION,
         "name": command.get_name(),
         "version": command.get_version(),
         "description": command.get_long_about().map(ToString::to_string),
@@ -178,7 +186,7 @@ fn schema() -> Value {
     })
 }
 
-fn output_format(output: &std::path::Path) -> Result<ExportFormat, String> {
+fn output_format(output: &std::path::Path) -> Result<ExportFormat, CliError> {
     match output.extension().and_then(|extension| extension.to_str()) {
         Some(extension) if extension.eq_ignore_ascii_case("png") => Ok(ExportFormat::Png),
         Some(extension)
@@ -186,16 +194,23 @@ fn output_format(output: &std::path::Path) -> Result<ExportFormat, String> {
         {
             Ok(ExportFormat::Jpeg)
         }
-        _ => Err("output filename must end in .png, .jpg, or .jpeg".to_owned()),
+        _ => Err(CliError::new(
+            "unsupported_output_format",
+            "output filename must end in .png, .jpg, or .jpeg",
+        )),
     }
 }
 
-fn load_images(paths: &[PathBuf]) -> Result<Vec<LoadedImage>, String> {
+fn load_images(paths: &[PathBuf]) -> Result<Vec<LoadedImage>, CliError> {
     paths
         .iter()
         .map(|path| {
-            load_image_with_metadata(path)
-                .map_err(|error| format!("cannot load {}: {error}", path.display()))
+            load_image_with_metadata(path).map_err(|error| {
+                CliError::new(
+                    "input_error",
+                    format!("cannot load {}: {error}", path.display()),
+                )
+            })
         })
         .collect()
 }
@@ -203,33 +218,103 @@ fn load_images(paths: &[PathBuf]) -> Result<Vec<LoadedImage>, String> {
 fn compose_loaded_images(
     loaded: &[LoadedImage],
     params: CliComposeParams<'_>,
-) -> Result<CompositionSpec, String> {
+) -> Result<CompositionSpec, CliError> {
     let metadata = loaded
         .iter()
         .map(|image| image.metadata.clone())
         .collect::<Vec<_>>();
-    CliComposer::compose(&metadata, params)
+    CliComposer::compose(&metadata, params).map_err(CliError::from)
 }
 
-fn run(output: PathBuf, composed: DynamicImage) -> Result<PathBuf, String> {
+struct ExportResult {
+    output: PathBuf,
+    width: u32,
+    height: u32,
+    format: &'static str,
+}
+
+fn run(output: PathBuf, composed: DynamicImage) -> Result<ExportResult, CliError> {
     let format = output_format(&output)?;
-    export_image(&composed, &output, format)
-        .map_err(|error| format!("cannot write {}: {error}", output.display()))?;
-    Ok(output)
+    export_image(&composed, &output, format).map_err(|error| {
+        CliError::new(
+            "output_error",
+            format!("cannot write {}: {error}", output.display()),
+        )
+    })?;
+    Ok(ExportResult {
+        output,
+        width: composed.width(),
+        height: composed.height(),
+        format: match format {
+            ExportFormat::Png => "png",
+            ExportFormat::Jpeg => "jpeg",
+        },
+    })
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let args = std::env::args_os().collect::<Vec<_>>();
+    let json_output = args
+        .iter()
+        .skip(1)
+        .take_while(|argument| *argument != "--")
+        .any(|argument| {
+            argument == "--json"
+                || argument
+                    .to_str()
+                    .is_some_and(|value| value.starts_with("--json="))
+        });
+    let cli = match Cli::try_parse_from(args) {
+        Ok(cli) => cli,
+        Err(error) => {
+            if !json_output {
+                error.exit();
+            }
+            match error.kind() {
+                clap::error::ErrorKind::DisplayHelp => {
+                    println!(
+                        "{}",
+                        json!({
+                            "schema_version": SCHEMA_VERSION, "ok": true, "help": error.to_string()
+                        })
+                    );
+                    return ExitCode::SUCCESS;
+                }
+                clap::error::ErrorKind::DisplayVersion => {
+                    println!(
+                        "{}",
+                        json!({
+                            "schema_version": SCHEMA_VERSION, "ok": true, "version": env!("CARGO_PKG_VERSION")
+                        })
+                    );
+                    return ExitCode::SUCCESS;
+                }
+                _ => {
+                    return CliError::new("invalid_arguments", error.to_string())
+                        .report(true, ExitCode::from(2))
+                }
+            }
+        }
+    };
     if cli.help_json {
-        println!("{}", schema());
+        let schema = schema();
+        if cli.json {
+            println!(
+                "{}",
+                json!({
+                    "schema_version": SCHEMA_VERSION, "ok": true, "schema": schema
+                })
+            );
+        } else {
+            println!("{schema}");
+        }
         return ExitCode::SUCCESS;
     }
 
     let loaded = match load_images(&cli.images) {
         Ok(images) => images,
         Err(error) => {
-            eprintln!("stitchr: {error}");
-            return ExitCode::FAILURE;
+            return error.report(cli.json, ExitCode::FAILURE);
         }
     };
     let spec = match compose_loaded_images(
@@ -246,19 +331,28 @@ fn main() -> ExitCode {
     ) {
         Ok(spec) => spec,
         Err(error) => {
-            eprintln!("stitchr: {error}");
-            return ExitCode::FAILURE;
+            return error.report(cli.json, ExitCode::FAILURE);
         }
     };
     if cli.print_spec {
-        return match serde_json::to_string_pretty(&spec) {
-            Ok(json) => {
-                println!("{json}");
+        return match serde_json::to_value(&spec) {
+            Ok(mut spec) => {
+                spec["schema_version"] = json!(SCHEMA_VERSION);
+                if cli.json {
+                    println!(
+                        "{}",
+                        json!({
+                            "schema_version": SCHEMA_VERSION, "ok": true, "spec": spec
+                        })
+                    );
+                } else {
+                    println!("{spec:#}");
+                }
                 ExitCode::SUCCESS
             }
             Err(error) => {
-                eprintln!("stitchr: cannot print spec: {error}");
-                ExitCode::FAILURE
+                CliError::new("serialization_error", format!("cannot print spec: {error}"))
+                    .report(cli.json, ExitCode::FAILURE)
             }
         };
     }
@@ -270,19 +364,29 @@ fn main() -> ExitCode {
     let composed = match render_spec(&spec, &images) {
         Ok(image) => image,
         Err(error) => {
-            eprintln!("stitchr: {error}");
-            return ExitCode::FAILURE;
+            return CliError::from(error).report(cli.json, ExitCode::FAILURE);
         }
     };
     match run(cli.output, composed) {
-        Ok(output) => {
-            println!("{}", output.display());
+        Ok(result) => {
+            if cli.json {
+                println!(
+                    "{}",
+                    json!({
+                        "schema_version": SCHEMA_VERSION,
+                        "ok": true,
+                        "output": result.output.to_string_lossy(),
+                        "width": result.width,
+                        "height": result.height,
+                        "format": result.format
+                    })
+                );
+            } else {
+                println!("{}", result.output.display());
+            }
             ExitCode::SUCCESS
         }
-        Err(error) => {
-            eprintln!("stitchr: {error}");
-            ExitCode::FAILURE
-        }
+        Err(error) => error.report(cli.json, ExitCode::FAILURE),
     }
 }
 
@@ -421,7 +525,7 @@ mod tests {
             .map(|image| image.image.clone())
             .collect::<Vec<_>>();
         let composed = render_spec(&spec, &pixels).unwrap();
-        assert_eq!(run(freeform.output.clone(), composed).unwrap(), png);
+        assert_eq!(run(freeform.output.clone(), composed).unwrap().output, png);
         let result = stitchr_core::load_image(&png).unwrap();
         assert_eq!((result.width(), result.height()), (4, 3));
 
@@ -456,7 +560,7 @@ mod tests {
             .map(|image| image.image.clone())
             .collect::<Vec<_>>();
         let composed = render_spec(&spec, &pixels).unwrap();
-        assert_eq!(run(vertical.output.clone(), composed).unwrap(), jpeg);
+        assert_eq!(run(vertical.output.clone(), composed).unwrap().output, jpeg);
         let result = stitchr_core::load_image(&jpeg).unwrap();
         assert_eq!((result.width(), result.height()), (6, 8));
         assert!(std::fs::read(&jpeg)

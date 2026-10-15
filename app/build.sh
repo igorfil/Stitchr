@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+case "${1:-}" in
+    ""|--test) ;;
+    *) printf 'Usage: bash app/build.sh [--test]\n' >&2; exit 2 ;;
+esac
+
 root="$(cd "$(dirname "$0")/.." && pwd)"
 archive="$root/target/release/libstitchr_core.a"
 swift_sources="$root/app/Sources/Stitchr/Generated"
@@ -46,3 +51,7 @@ cp "$bin_dir/Stitchr" "$bundle/Contents/MacOS/Stitchr"
 cp "$root/app/Info.plist" "$bundle/Contents/Info.plist"
 /usr/bin/codesign --force --sign - "$bundle"
 printf 'Built %s\n' "$bundle"
+
+if [[ "${1:-}" == --test ]]; then
+    swift test --package-path "$root/app" --scratch-path "$root/target/swift-build" --disable-xctest
+fi

@@ -1,7 +1,7 @@
 use crate::{CliAlignment, CliLayout};
 use stitchr_core::{
-    compose_spec, Alignment, CompositionParams, CompositionSpec, ImageMetadata, RgbColor,
-    SpecLayout, SpecPosition, StackDirection,
+    compose_spec, Alignment, ComposeError, CompositionParams, CompositionSpec, ImageMetadata,
+    RgbColor, SpecLayout, SpecPosition, StackDirection,
 };
 
 pub(crate) struct CliComposer;
@@ -20,7 +20,7 @@ impl CliComposer {
     pub(crate) fn compose(
         images: &[ImageMetadata],
         cli_params: CliComposeParams<'_>,
-    ) -> Result<CompositionSpec, String> {
+    ) -> Result<CompositionSpec, ComposeError> {
         let alignment = match cli_params.alignment {
             CliAlignment::Start => Alignment::Start,
             CliAlignment::Center => Alignment::Center,
@@ -63,7 +63,6 @@ impl CliComposer {
                 background_color: cli_params.background_color,
             },
         )
-        .map_err(|error| error.to_string())
     }
 }
 

@@ -134,6 +134,9 @@ mod tests {
             CompositionSpec {
                 images: vec![ImagePlacement {
                     name: "image.png".into(),
+                    path: None,
+                    width: 3,
+                    height: 2,
                     position: SpecPosition { x: 0, y: 0 },
                 }],
                 layout: SpecLayout::Grid {
@@ -173,10 +176,16 @@ mod tests {
                 images: vec![
                     ImagePlacement {
                         name: "missing-one.png".into(),
+                        path: None,
+                        width: 3,
+                        height: 2,
                         position: SpecPosition { x: 10, y: 10 },
                     },
                     ImagePlacement {
                         name: "missing-two.jpg".into(),
+                        path: None,
+                        width: 3,
+                        height: 2,
                         position: SpecPosition { x: 23, y: 10 },
                     },
                 ],

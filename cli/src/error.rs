@@ -20,6 +20,7 @@ pub(crate) const ERROR_CODES: &[(&str, &str)] = &[
     ("invalid_image_dimensions", "An input has a zero dimension."),
     ("invalid_columns", "Grid columns must be positive."),
     ("image_count_mismatch", "The render inputs do not match the planned composition."),
+    ("image_size_mismatch", "An input does not have the size its placement in the spec expects."),
     ("serialization_error", "The composition could not be serialized."),
 ];
 
@@ -188,6 +189,19 @@ impl From<ComposeError> for CliError {
             ComposeError::ImageCountMismatch { expected, actual } => (
                 "image_count_mismatch",
                 Some(json!({ "expected": expected, "actual": actual })),
+            ),
+            ComposeError::ImageSizeMismatch {
+                index,
+                expected,
+                actual,
+            } => (
+                "image_size_mismatch",
+                Some(json!({
+                    "index": index,
+                    "width": actual.0,
+                    "height": actual.1,
+                    "expected": size(expected.0, expected.1)
+                })),
             ),
             ComposeError::FreeformPositionCount { expected, actual } => (
                 "freeform_position_count",

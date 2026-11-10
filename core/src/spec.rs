@@ -41,6 +41,12 @@ pub struct ImageMetadata {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImagePlacement {
     pub name: String,
+    /// Where the image was loaded from, when known; used to render a spec read back from JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// Size the image is drawn at, in pixels.
+    pub width: u32,
+    pub height: u32,
     pub position: SpecPosition,
 }
 
@@ -147,6 +153,9 @@ pub fn compose_spec(
         .zip(plan.positions)
         .map(|(image, (x, y))| ImagePlacement {
             name: image.name.clone(),
+            path: None,
+            width: image.width,
+            height: image.height,
             position: SpecPosition {
                 x: x + left,
                 y: y + top,
@@ -162,6 +171,42 @@ pub fn compose_spec(
         background_gradient: params.background_gradient,
         frame: params.frame.clone(),
     })
+}
+
+/// Checks that a spec, for example one read back from JSON, is internally consistent.
+pub fn validate_spec(spec: &CompositionSpec) -> Result<(), ComposeError> {
+    if spec.images.is_empty() {
+        return Err(ComposeError::NoImages);
+    }
+    if spec.width == 0
+        || spec.height == 0
+        || spec
+            .images
+            .iter()
+            .any(|image| image.width == 0 || image.height == 0)
+    {
+        return Err(ComposeError::InvalidImageDimensions);
+    }
+    if let Some(frame) = &spec.frame {
+        if frame.labels.len() != spec.images.len() {
+            return Err(ComposeError::LabelCountMismatch {
+                expected: spec.images.len(),
+                actual: frame.labels.len(),
+            });
+        }
+    }
+    if let SpecLayout::Split { .. } = spec.layout {
+        let (left, top) = spec.frame.as_ref().map_or((0, 0), frame::inset);
+        let size = (
+            spec.width.saturating_sub(left.saturating_mul(2)),
+            spec.height.saturating_sub(top.saturating_add(left)),
+        );
+        layout::require_same_size(
+            spec.images.iter().map(|image| (image.width, image.height)),
+            size,
+        )?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -239,7 +284,9 @@ mod tests {
         assert!(value.get("paths").is_none());
         assert!(value.get("sizes").is_none());
         assert!(value.get("spacing").is_none());
-        assert!(value["images"][0].get("width").is_none());
+        assert_eq!(value["images"][0]["width"], 1);
+        assert_eq!(value["images"][0]["height"], 2);
+        assert!(value["images"][0].get("path").is_none());
         assert_eq!(
             serde_json::from_value::<CompositionSpec>(value).unwrap(),
             spec
@@ -344,5 +391,187 @@ mod tests {
                 .collect::<Vec<_>>(),
             [(1, 2), (3, 0)]
         );
+    }
+}
+
+#[cfg(test)]
+mod validation_tests {
+    use super::*;
+
+    fn placement(width: u32, height: u32) -> ImagePlacement {
+        ImagePlacement {
+            name: "image.png".into(),
+            path: None,
+            width,
+            height,
+            position: SpecPosition { x: 0, y: 0 },
+        }
+    }
+
+    fn spec(layout: SpecLayout, images: Vec<ImagePlacement>, size: (u32, u32)) -> CompositionSpec {
+        CompositionSpec {
+            images,
+            layout,
+            width: size.0,
+            height: size.1,
+            background_color: RgbColor::default(),
+            background_gradient: None,
+            frame: None,
+        }
+    }
+
+    fn grid() -> SpecLayout {
+        SpecLayout::Grid {
+            columns: 2,
+            spacing: 0,
+            alignment: Alignment::Start,
+        }
+    }
+
+    fn frame(labels: usize) -> SpecFrame {
+        SpecFrame {
+            labels: vec![String::new(); labels],
+            border_width: 3,
+            border_color: RgbColor::default(),
+            label_size: 20,
+        }
+    }
+
+    #[test]
+    fn composed_specs_are_valid() {
+        let images = [
+            ImageMetadata {
+                name: "a.png".into(),
+                width: 3,
+                height: 2,
+            },
+            ImageMetadata {
+                name: "b.png".into(),
+                width: 3,
+                height: 2,
+            },
+        ];
+        for layout in [grid(), SpecLayout::Split { divider: 1 }] {
+            for frame in [None, Some(frame(2))] {
+                let composed = compose_spec(
+                    &images,
+                    &CompositionParams {
+                        layout: layout.clone(),
+                        background_color: RgbColor::default(),
+                        background_gradient: None,
+                        frame,
+                    },
+                )
+                .unwrap();
+
+                assert_eq!(validate_spec(&composed), Ok(()), "{composed:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn spec_without_images_is_invalid() {
+        assert_eq!(
+            validate_spec(&spec(grid(), vec![], (1, 1))),
+            Err(ComposeError::NoImages)
+        );
+    }
+
+    #[test]
+    fn zero_sized_canvas_or_image_is_invalid() {
+        for (image, canvas) in [
+            ((0, 1), (1, 1)),
+            ((1, 0), (1, 1)),
+            ((1, 1), (0, 1)),
+            ((1, 1), (1, 0)),
+        ] {
+            assert_eq!(
+                validate_spec(&spec(grid(), vec![placement(image.0, image.1)], canvas)),
+                Err(ComposeError::InvalidImageDimensions),
+                "{image:?} {canvas:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn label_count_must_match_image_count() {
+        let mut framed = spec(grid(), vec![placement(1, 1), placement(1, 1)], (10, 10));
+        framed.frame = Some(frame(1));
+
+        assert_eq!(
+            validate_spec(&framed),
+            Err(ComposeError::LabelCountMismatch {
+                expected: 2,
+                actual: 1
+            })
+        );
+    }
+
+    #[test]
+    fn split_images_must_match_the_canvas() {
+        let mismatched = spec(
+            SpecLayout::Split { divider: 0 },
+            vec![placement(4, 4), placement(4, 5)],
+            (4, 4),
+        );
+
+        assert_eq!(
+            validate_spec(&mismatched),
+            Err(ComposeError::SplitSizeMismatch {
+                index: 1,
+                expected: (4, 4),
+                actual: (4, 5)
+            })
+        );
+    }
+
+    #[test]
+    fn framed_split_images_match_the_canvas_inside_the_border() {
+        let mut framed = spec(
+            SpecLayout::Split { divider: 0 },
+            vec![placement(4, 4), placement(4, 4)],
+            (10, 10),
+        );
+        framed.frame = Some(frame(2));
+
+        assert_eq!(validate_spec(&framed), Ok(()));
+        framed.width = 11;
+        assert!(matches!(
+            validate_spec(&framed),
+            Err(ComposeError::SplitSizeMismatch { index: 0, .. })
+        ));
+    }
+
+    #[test]
+    fn non_split_placements_may_lie_anywhere() {
+        let mut placed = placement(5, 5);
+        placed.position = SpecPosition { x: 100, y: 100 };
+
+        assert_eq!(validate_spec(&spec(grid(), vec![placed], (2, 2))), Ok(()));
+    }
+
+    #[test]
+    fn path_round_trips_and_is_omitted_when_unknown() {
+        let mut with_path = placement(1, 1);
+        with_path.path = Some("/tmp/a.png".into());
+
+        let value = serde_json::to_value(&with_path).unwrap();
+
+        assert_eq!(value["path"], "/tmp/a.png");
+        assert_eq!(
+            serde_json::from_value::<ImagePlacement>(value).unwrap(),
+            with_path
+        );
+        assert!(serde_json::to_value(placement(1, 1))
+            .unwrap()
+            .get("path")
+            .is_none());
+    }
+
+    #[test]
+    fn placement_without_a_size_does_not_deserialize() {
+        let value = serde_json::json!({ "name": "a.png", "position": { "x": 0, "y": 0 } });
+
+        assert!(serde_json::from_value::<ImagePlacement>(value).is_err());
     }
 }

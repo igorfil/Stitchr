@@ -39,7 +39,7 @@ stitchr --json docs/examples/light.png docs/examples/dark.png \
   --layout split --divider 4 --background white --print-spec
 ```
 
-Read `response.spec.width`, `height`, `layout`, `background_color`, and `images`. Each image has a name and a top-left position. Split images all have position `(0, 0)`; the renderer selects their diagonal regions.
+Read `response.spec.width`, `height`, `layout`, `background_color`, and `images`. Each image has a `name`, the `width` and `height` it is drawn at, and a top-left `position`. Split images all have position `(0, 0)`; the renderer selects their diagonal regions.
 
 `--print-spec` loads and decodes the inputs, but writes no image. It does not validate the export destination or allocate the canvas. Rendering can still fail because of memory limits or output permissions. The printed spec is an inspection format; there is no CLI option to read it back as a render request.
 
@@ -168,6 +168,7 @@ Many errors also carry an `error.details` object with machine-readable context. 
 | `no_images` | The composition engine received no images. Supply at least one input. |
 | `invalid_image_dimensions` | An input has a zero dimension. Replace it with a valid image. |
 | `invalid_columns` | The engine requires positive grid columns. CLI argument validation normally reports this as `invalid_arguments`. |
+| `image_size_mismatch` | An input's size differs from the `width`/`height` its placement in the spec expects. Re-run `--print-spec` against the current inputs. |
 | `image_count_mismatch` | The render inputs do not match the planned composition. Replan; if persistent, report a bug. |
 | `serialization_error` | The composition could not be serialized. Report a bug. |
 

@@ -59,6 +59,12 @@ pub enum ComposeError {
         expected: usize,
         actual: usize,
     },
+    /// An image passed to the renderer does not have the size its placement expects.
+    ImageSizeMismatch {
+        index: usize,
+        expected: (u32, u32),
+        actual: (u32, u32),
+    },
     FreeformPositionCount {
         expected: usize,
         actual: usize,
@@ -92,6 +98,15 @@ impl fmt::Display for ComposeError {
             Self::ImageCountMismatch { expected, actual } => {
                 write!(f, "expected {expected} images, got {actual}")
             }
+            Self::ImageSizeMismatch {
+                index,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "image {index} is {}x{}, but the spec places it at {}x{}",
+                actual.0, actual.1, expected.0, expected.1
+            ),
             Self::FreeformPositionCount { expected, actual } => {
                 write!(f, "expected {expected} freeform positions, got {actual}")
             }

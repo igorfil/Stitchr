@@ -119,9 +119,9 @@ fn three_image_spec_tracks_mixed_png_and_jpeg_dimensions_identically() {
     assert_eq!(
         png_spec["images"],
         json!([
-            { "name": "a.png", "position": { "x": 0, "y": 0 } },
-            { "name": "b.png", "position": { "x": 6, "y": 0 } },
-            { "name": "c.png", "position": { "x": 0, "y": 4 } }
+            { "name": "a.png", "width": 4, "height": 2, "position": { "x": 0, "y": 0 } },
+            { "name": "b.png", "width": 2, "height": 4, "position": { "x": 6, "y": 0 } },
+            { "name": "c.png", "width": 6, "height": 1, "position": { "x": 0, "y": 4 } }
         ])
     );
     assert_eq!(mixed_spec["width"], png_spec["width"]);

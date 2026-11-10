@@ -12,8 +12,8 @@ pub use gradient::SpecGradient;
 pub use image::DynamicImage;
 pub use layout::{Alignment, ComposeError, ComposeOptions, Layout, StackDirection};
 pub use spec::{
-    compose_spec, CompositionParams, CompositionSpec, ImageMetadata, ImagePlacement, PlacementPlan,
-    SpecLayout, SpecPosition,
+    compose_spec, validate_spec, CompositionParams, CompositionSpec, ImageMetadata, ImagePlacement,
+    PlacementPlan, SpecLayout, SpecPosition,
 };
 
 use image::{imageops, GenericImage, ImageDecoder, ImageReader, Limits, Pixel, Rgba, RgbaImage};
@@ -239,6 +239,21 @@ pub fn render_spec(
         return Err(ComposeError::ImageCountMismatch {
             expected: spec.images.len(),
             actual: images.len(),
+        });
+    }
+    if let Some((index, (placement, image))) =
+        spec.images
+            .iter()
+            .zip(images)
+            .enumerate()
+            .find(|(_, (placement, image))| {
+                (placement.width, placement.height) != (image.width(), image.height())
+            })
+    {
+        return Err(ComposeError::ImageSizeMismatch {
+            index,
+            expected: (placement.width, placement.height),
+            actual: (image.width(), image.height()),
         });
     }
     if let SpecLayout::Split { divider } = spec.layout {
@@ -699,6 +714,52 @@ mod tests {
     }
 
     #[test]
+    fn render_spec_rejects_images_that_differ_from_their_placement() {
+        let images = [solid(2, 2, RED), solid(3, 1, BLUE)];
+        let spec = spec_for(
+            &images,
+            SpecLayout::Grid {
+                columns: 2,
+                spacing: 0,
+                alignment: Alignment::Start,
+            },
+            RgbColor::default(),
+        );
+
+        assert_eq!(
+            render_spec(&spec, &[solid(2, 2, RED), solid(3, 2, BLUE)]).err(),
+            Some(ComposeError::ImageSizeMismatch {
+                index: 1,
+                expected: (3, 1),
+                actual: (3, 2)
+            })
+        );
+        assert!(render_spec(&spec, &images).is_ok());
+    }
+
+    #[test]
+    fn spec_placements_record_the_drawn_image_size() {
+        let images = [solid(4, 2, RED), solid(1, 3, BLUE)];
+        let spec = spec_for(
+            &images,
+            SpecLayout::Stack {
+                direction: StackDirection::Horizontal,
+                spacing: 5,
+                alignment: Alignment::Center,
+            },
+            RgbColor::default(),
+        );
+
+        assert_eq!(
+            spec.images
+                .iter()
+                .map(|image| (image.width, image.height))
+                .collect::<Vec<_>>(),
+            [(4, 2), (1, 3)]
+        );
+    }
+
+    #[test]
     fn compose_error_messages_include_their_details() {
         assert_eq!(
             ComposeError::SplitSizeMismatch {
@@ -718,6 +779,15 @@ mod tests {
             }
             .to_string(),
             "composition dimensions exceed the supported size: a 3x2 canvas needs 24 bytes, the limit is 10"
+        );
+        assert_eq!(
+            ComposeError::ImageSizeMismatch {
+                index: 0,
+                expected: (4, 4),
+                actual: (8, 8)
+            }
+            .to_string(),
+            "image 0 is 8x8, but the spec places it at 4x4"
         );
         assert_eq!(
             ComposeError::SizeOverflow.to_string(),
@@ -2840,7 +2910,7 @@ mod tests {
         );
         assert_eq!(
             render_spec(&spec, &images).err(),
-            Some(ComposeError::SplitSizeMismatch {
+            Some(ComposeError::ImageSizeMismatch {
                 index: 1,
                 expected: (2, 2),
                 actual: (2, 3)

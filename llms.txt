@@ -1,0 +1,10 @@
+# Stitchr
+
+> Screenshot-composition CLI for humans and AI agents. Combines local PNG/JPEG files into grids, stacks, freeform arrangements, or diagonal split comparisons, with versioned JSON output and stable error codes.
+
+## Docs
+
+- [Agent usage guide](https://github.com/igorfil/Stitchr/blob/main/docs/agents.md): workflow, JSON contract, error codes, and composition rules. Start here.
+- [Runnable cookbook](https://github.com/igorfil/Stitchr/blob/main/docs/examples/README.md)
+- [Machine-readable cookbook](https://github.com/igorfil/Stitchr/blob/main/docs/examples/cases.json)
+- [README](https://github.com/igorfil/Stitchr/blob/main/README.md): installation and options overview

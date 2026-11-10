@@ -132,6 +132,22 @@ Example failure:
 
 Branch on `error.code`, not `error.message`. Messages may include paths and operating-system details.
 
+Many errors also carry an `error.details` object with machine-readable context. It is omitted when there is nothing to add:
+
+| Code | `details` fields |
+| --- | --- |
+| `invalid_arguments` | `kind` (for example `value_validation`, `invalid_value`, `unknown_argument`, `argument_conflict`, `missing_required_argument`, `strict`), and when known `option`, `value`, `reason`, `allowed` (valid enum values), `suggestion` (closest flag or value). With `--strict`, `warnings` lists every warning. |
+| `input_error` | `index` (input position) and `path` (`"-"` for stdin) |
+| `split_size_mismatch` | `index`, `path`, `width`, `height` of the first differing input, and `expected` (`width`, `height`) |
+| `canvas_too_large` | `width`, `height`, `bytes`, `limit_bytes` when the canvas buffer exceeds the memory limit, or `max_dimension` when a side would not fit in 32 bits |
+| `freeform_position_count`, `label_count_mismatch`, `image_count_mismatch` | `expected`, `actual` |
+| `unsupported_output_format` | `path`, and `supported_extensions` or `supported_formats` |
+| `output_error` | `path` |
+
+```json
+{"code": "split_size_mismatch", "message": "...", "details": {"index": 1, "path": "shot3.png", "width": 1024, "height": 768, "expected": {"width": 1280, "height": 800}}}
+```
+
 | Code | Meaning / recovery |
 | --- | --- |
 | `invalid_arguments` | Missing inputs, unknown flags, invalid enum/color/numeric values, wrong argument arity, or a repeated single-use option such as `--background-gradient`. Also: `-` used as an input more than once, `-o -` with `--json`, `-o -` without `--format`, or any warning under `--strict`. Inspect the schema and correct the arguments. |

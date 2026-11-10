@@ -252,3 +252,112 @@ fn flag_values_and_paths_after_separator_do_not_enable_json() {
         assert!(String::from_utf8_lossy(&output.stderr).starts_with("stitchr: "));
     }
 }
+
+#[test]
+fn split_size_mismatch_details_name_the_offending_input() {
+    let directory = fixtures();
+    let value = response(
+        &run(
+            &directory,
+            &[
+                "--json",
+                "first.png",
+                "first.png",
+                "second.png",
+                "--layout",
+                "split",
+            ],
+        ),
+        1,
+    );
+
+    assert_eq!(
+        value["error"]["details"],
+        json!({
+            "index": 2, "path": "second.png", "width": 1, "height": 2,
+            "expected": { "width": 2, "height": 1 }
+        })
+    );
+}
+
+#[test]
+fn input_error_details_give_index_and_path() {
+    let directory = fixtures();
+    let value = response(&run(&directory, &["--json", "first.png", "missing.png"]), 1);
+
+    assert_eq!(
+        value["error"]["details"],
+        json!({ "index": 1, "path": "missing.png" })
+    );
+}
+
+#[test]
+fn canvas_too_large_details_report_size_and_limit() {
+    let directory = fixtures();
+    let value = response(
+        &run(&directory, &["--json", "first.png", "--spacing", "10000"]),
+        1,
+    );
+
+    assert_eq!(
+        value["error"]["details"],
+        json!({
+            "width": 20002, "height": 20001,
+            "bytes": 20002_u64 * 20001 * 4, "limit_bytes": 536_870_912
+        })
+    );
+}
+
+#[test]
+fn argument_error_details_describe_the_option() {
+    let directory = fixtures();
+    let value = response(
+        &run(&directory, &["--json", "first.png", "--columns", "0"]),
+        2,
+    );
+    let details = &value["error"]["details"];
+
+    assert_eq!(details["kind"], "value_validation");
+    assert_eq!(details["option"], "--columns");
+    assert_eq!(details["value"], "0");
+}
+
+#[test]
+fn unsupported_output_details_list_extensions() {
+    let directory = fixtures();
+    let value = response(
+        &run(&directory, &["--json", "first.png", "-o", "out.bmp"]),
+        1,
+    );
+
+    assert_eq!(
+        value["error"]["details"],
+        json!({ "path": "out.bmp", "supported_extensions": ["png", "jpg", "jpeg"] })
+    );
+}
+
+#[test]
+fn freeform_position_count_details_report_counts() {
+    let directory = fixtures();
+    let value = response(
+        &run(
+            &directory,
+            &[
+                "--json",
+                "first.png",
+                "second.png",
+                "--layout",
+                "freeform",
+                "--position",
+                "0",
+                "0",
+            ],
+        ),
+        1,
+    );
+
+    assert_eq!(
+        value["error"]["details"],
+        json!({ "expected": 2, "actual": 1 })
+    );
+}

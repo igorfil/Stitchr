@@ -1,4 +1,5 @@
 use crate::{error::CliError, CliFormat};
+use serde_json::json;
 use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -9,6 +10,7 @@ use stitchr_core::{
 };
 
 pub(crate) const STDIO_PATH: &str = "-";
+const SUPPORTED_EXTENSIONS: [&str; 3] = ["png", "jpg", "jpeg"];
 
 pub(crate) fn is_stdio(path: &Path) -> bool {
     path.as_os_str() == STDIO_PATH
@@ -25,7 +27,8 @@ pub(crate) fn output_format(
             return Err(CliError::new(
                 "unsupported_output_format",
                 "-o - requires --format png or --format jpeg",
-            ))
+            )
+            .with_details(json!({ "path": STDIO_PATH, "supported_formats": ["png", "jpeg"] })))
         }
         None => {}
     }
@@ -39,18 +42,28 @@ pub(crate) fn output_format(
         _ => Err(CliError::new(
             "unsupported_output_format",
             "output filename must end in .png, .jpg, or .jpeg",
-        )),
+        )
+        .with_details(json!({
+            "path": output.to_string_lossy(),
+            "supported_extensions": SUPPORTED_EXTENSIONS
+        }))),
     }
 }
 
-fn load_stdin() -> Result<LoadedImage, CliError> {
+fn input_error(index: usize, path: &Path, message: String) -> CliError {
+    CliError::new("input_error", message)
+        .with_details(json!({ "index": index, "path": path.to_string_lossy() }))
+}
+
+fn load_stdin(index: usize) -> Result<LoadedImage, CliError> {
+    let stdin = Path::new(STDIO_PATH);
     let mut bytes = Vec::new();
     std::io::stdin()
         .lock()
         .read_to_end(&mut bytes)
-        .map_err(|error| CliError::new("input_error", format!("cannot read stdin: {error}")))?;
+        .map_err(|error| input_error(index, stdin, format!("cannot read stdin: {error}")))?;
     let image = load_image_from_bytes(&bytes)
-        .map_err(|error| CliError::new("input_error", format!("cannot load stdin: {error}")))?;
+        .map_err(|error| input_error(index, stdin, format!("cannot load stdin: {error}")))?;
     let metadata = ImageMetadata {
         name: STDIO_PATH.into(),
         width: image.width(),
@@ -62,13 +75,15 @@ fn load_stdin() -> Result<LoadedImage, CliError> {
 pub(crate) fn load_images(paths: &[PathBuf]) -> Result<Vec<LoadedImage>, CliError> {
     paths
         .iter()
-        .map(|path| {
+        .enumerate()
+        .map(|(index, path)| {
             if is_stdio(path) {
-                return load_stdin();
+                return load_stdin(index);
             }
             load_image_with_metadata(path).map_err(|error| {
-                CliError::new(
-                    "input_error",
+                input_error(
+                    index,
+                    path,
                     format!("cannot load {}: {error}", path.display()),
                 )
             })
@@ -81,7 +96,8 @@ pub(crate) fn validate_stdin(images: &[PathBuf]) -> Result<(), CliError> {
         return Err(CliError::new(
             "invalid_arguments",
             "- (stdin) can be used as an input only once",
-        ));
+        )
+        .with_details(json!({ "kind": "stdin_reused", "option": STDIO_PATH })));
     }
     Ok(())
 }
@@ -98,13 +114,15 @@ pub(crate) fn validate_stdout(
         return Err(CliError::new(
             "invalid_arguments",
             "-o - cannot be combined with --json because stdout carries the image",
-        ));
+        )
+        .with_details(json!({ "kind": "argument_conflict", "option": "--output", "conflicts_with": "--json" })));
     }
     if format.is_none() {
         return Err(CliError::new(
             "invalid_arguments",
             "-o - requires --format png or --format jpeg",
-        ));
+        )
+        .with_details(json!({ "kind": "missing_required_argument", "option": "--format", "required_by": "--output -" })));
     }
     Ok(())
 }
@@ -122,18 +140,24 @@ fn write_output(
                     "output_error",
                     format!("cannot write {}: {error}", output.display()),
                 )
+                .with_details(json!({ "path": output.to_string_lossy() }))
             },
         );
     }
     // Encode fully before writing so an encoder failure never leaves a truncated image on stdout.
     let mut bytes = Vec::new();
-    write_image(composed, &mut bytes, format, jpeg_quality)
-        .map_err(|error| CliError::new("output_error", format!("cannot encode image: {error}")))?;
+    write_image(composed, &mut bytes, format, jpeg_quality).map_err(|error| {
+        CliError::new("output_error", format!("cannot encode image: {error}"))
+            .with_details(json!({ "path": STDIO_PATH }))
+    })?;
     let mut stdout = std::io::stdout().lock();
     stdout
         .write_all(&bytes)
         .and_then(|()| stdout.flush())
-        .map_err(|error| CliError::new("output_error", format!("cannot write stdout: {error}")))
+        .map_err(|error| {
+            CliError::new("output_error", format!("cannot write stdout: {error}"))
+                .with_details(json!({ "path": STDIO_PATH }))
+        })
 }
 
 #[derive(Debug)]

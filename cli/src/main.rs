@@ -278,18 +278,6 @@ fn collect_warnings(cli: &Cli, spec: &CompositionSpec, metadata: &[ImageMetadata
     collected
 }
 
-fn strict_error(warnings: &[Warning]) -> CliError {
-    let reasons = warnings
-        .iter()
-        .map(|warning| warning.reason.as_str())
-        .collect::<Vec<_>>()
-        .join("; ");
-    CliError::new(
-        "invalid_arguments",
-        format!("--strict treats warnings as errors: {reasons}"),
-    )
-}
-
 fn execute(cli: Cli) -> Result<Success, CliError> {
     if cli.help_json {
         return Ok(Success::Schema(schema::schema()));
@@ -300,10 +288,11 @@ fn execute(cli: Cli) -> Result<Success, CliError> {
         .iter()
         .map(|image| image.metadata.clone())
         .collect::<Vec<_>>();
-    let spec = CliComposer::compose(&metadata, cli.compose_params())?;
+    let spec = CliComposer::compose(&metadata, cli.compose_params())
+        .map_err(|error| CliError::from(error).with_input_paths(&cli.images))?;
     let warnings = collect_warnings(&cli, &spec, &metadata);
     if cli.strict && !warnings.is_empty() {
-        return Err(strict_error(&warnings));
+        return Err(CliError::strict(&warnings));
     }
     if cli.print_spec {
         return Ok(Success::Spec {
@@ -316,7 +305,8 @@ fn execute(cli: Cli) -> Result<Success, CliError> {
         .into_iter()
         .map(|loaded| loaded.image)
         .collect::<Vec<_>>();
-    let composed = render_spec(&spec, &images)?;
+    let composed = render_spec(&spec, &images)
+        .map_err(|error| CliError::from(error).with_input_paths(&cli.images))?;
     let result = io::export(cli.output, &composed, cli.format, cli.jpeg_quality)?;
     Ok(Success::Rendered { result, warnings })
 }
@@ -356,7 +346,7 @@ fn parse(args: Vec<OsString>, json_output: bool) -> Result<Cli, Result<Success, 
         match error.kind() {
             clap::error::ErrorKind::DisplayHelp => Ok(Success::Help(error.to_string())),
             clap::error::ErrorKind::DisplayVersion => Ok(Success::Version),
-            _ => Err(CliError::new("invalid_arguments", error.to_string())),
+            _ => Err(CliError::from(&error)),
         }
     })
 }

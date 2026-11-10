@@ -10,8 +10,6 @@ Run the commands from the repository root after [installing Stitchr](../README.m
 | `dark.png` | 640 × 400 | Dark-theme editor screenshot |
 | `overlay.png` | 128 × 80 | Small transparent image with purple regions |
 
-To regenerate every image on this page, run `examples/generate.sh` (set `STITCHR` to use a specific binary, for example `STITCHR=target/release/stitchr`).
-
 ## Layouts
 
 ### 1. Side by side

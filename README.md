@@ -1,6 +1,6 @@
 # Stitchr
 
-Combine PNG and JPEG images into grids, stacks, freeform arrangements, or diagonal split comparisons, with solid or gradient backgrounds, borders, and labels.
+Combine PNG, JPEG, WebP, and GIF images into grids, stacks, freeform arrangements, or diagonal split comparisons, with solid or gradient backgrounds, borders, and labels.
 
 Stitchr is a local image-composition CLI for macOS and Linux, built for both people and AI agents. Agents get a machine-readable argument schema, layout inspection before rendering, and versioned JSON results with stable error codes.
 
@@ -65,6 +65,7 @@ Errors use `{"schema_version":1,"ok":false,"error":{"code":"...","message":"..."
 - The output extension selects PNG (`.png`) or JPEG (`.jpg`, `.jpeg`). `--format png|jpeg` overrides the extension. Existing output files are overwritten, but Stitchr refuses to overwrite one of its inputs unless you pass `--force`. Use `--no-clobber` to never overwrite, and `--mkdir` to create missing parent directories.
 - `--jpeg-quality` sets JPEG quality from 1 to 100 (default 75). It is ignored for PNG.
 - Use `-` as an input to read one image from stdin, and `-o -` with `--format` to write the image to stdout: `cat a.png | stitchr - b.png -o - --format png > out.png`. `-o -` cannot be combined with `--json`. Use `./-` for a file literally named `-`.
+- Inputs can be PNG, JPEG, WebP, or GIF; the format is detected from the file content, and animated images use their first frame. Output is PNG or JPEG.
 - Images keep their original pixel dimensions, after applying EXIF orientation, unless you pass a fit option. Images are only ever shrunk: `--fit-height min` gives a horizontal stack equal heights, and `--max-width 1200` shrinks the images so the whole output fits while spacing, borders, and labels keep their size.
 - Colors accept names, `'#RRGGBB'`, and `'rgb(r,g,b)'`; quote colors containing shell metacharacters.
 - Output is opaque: transparent input pixels blend onto the selected background.

@@ -1,6 +1,6 @@
 # Stitchr
 
-> Screenshot-composition CLI for humans and AI agents. Combines local PNG/JPEG files into grids, stacks, freeform arrangements, or diagonal split comparisons, with versioned JSON output and stable error codes.
+> Screenshot-composition CLI for humans and AI agents. Combines local PNG, JPEG, WebP, and GIF files into grids, stacks, freeform arrangements, or diagonal split comparisons, with versioned JSON output and stable error codes.
 
 ## Docs
 

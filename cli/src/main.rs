@@ -71,12 +71,12 @@ enum CliGradientKind {
 #[command(
     name = "stitchr",
     version,
-    about = "Combine PNG and JPEG images into one image",
-    long_about = "Arrange PNG/JPEG images in a grid, horizontal or vertical stack, at explicit freeform positions, or as diagonal split slices of same-size images. Output format is selected by the output file extension.",
+    about = "Combine PNG, JPEG, WebP, and GIF images into one PNG or JPEG image",
+    long_about = "Arrange PNG, JPEG, WebP, or GIF images in a grid, horizontal or vertical stack, at explicit freeform positions, or as diagonal split slices of same-size images. Output format is selected by the output file extension.",
     after_help = "Examples:\n  stitchr img1.png img2.png --layout grid --spacing 10\n  stitchr img1.png img2.jpg --layout horizontal --alignment center -o combined.jpg\n  stitchr img1.png img2.png --layout freeform --position 0 0 --position 300 80 -o combined.png\n  stitchr light.png dark.png --layout split --divider 4 --background white -o split.png\n  stitchr before.png after.png --layout horizontal --spacing 16 --background white --label Before --label After -o labeled.png\n  stitchr img1.png img2.png --spacing 40 --background-gradient '#ff7e5f' '#feb47b' --gradient-angle 135 -o gradient.png\n  stitchr img1.png img2.png --background rebeccapurple --print-spec"
 )]
 struct Cli {
-    #[arg(required_unless_present_any = ["help_json", "spec"], num_args = 1.., value_name = "IMAGE", help = "Input PNG/JPEG paths, or - to read one image from stdin (one or more; required unless --help-json/--schema or --spec)")]
+    #[arg(required_unless_present_any = ["help_json", "spec"], num_args = 1.., value_name = "IMAGE", help = "Input PNG, JPEG, WebP, or GIF paths (format detected from content; GIF uses its first frame), or - to read one image from stdin (one or more; required unless --help-json/--schema or --spec)")]
     images: Vec<PathBuf>,
 
     #[arg(

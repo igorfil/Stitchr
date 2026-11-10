@@ -1,6 +1,6 @@
 # Using Stitchr from an agent
 
-Stitchr composes local PNG/JPEG files without network access or an interactive session. Pass arguments as an array and use `--json` for a machine-readable result.
+Stitchr composes local PNG, JPEG, WebP, and GIF files into a PNG or JPEG image without network access or an interactive session. Pass arguments as an array and use `--json` for a machine-readable result.
 
 - [Runnable cookbook](examples/README.md)
 - [Machine-readable cookbook](examples/cases.json)
@@ -175,7 +175,7 @@ Many errors also carry an `error.details` object with machine-readable context. 
 | Code | Meaning / recovery |
 | --- | --- |
 | `invalid_arguments` | Missing inputs, unknown flags, invalid enum/color/numeric values, wrong argument arity, or a repeated single-use option such as `--background-gradient`. Also: `-` used as an input more than once, `-o -` with `--json`, `-o -` without `--format`, or any warning under `--strict`. Inspect the schema and correct the arguments. |
-| `input_error` | Input is missing, unreadable, corrupt, or unsupported. Check its path (or stdin bytes for `-`) and PNG/JPEG encoding. |
+| `input_error` | Input is missing, unreadable, corrupt, or unsupported. Check its path (or stdin bytes for `-`) and that it is a PNG, JPEG, WebP, or GIF image. |
 | `unsupported_output_format` | Choose an output ending in `.png`, `.jpg`, or `.jpeg`, or pass `--format png\|jpeg`. |
 | `output_error` | Check the destination directory, permissions, available space, and whether the destination is a directory. Pass `--mkdir` to create missing parent directories. |
 | `output_conflicts_with_input` | The output is the same file as an input (including through symlinks or hard links). Choose another output, or pass `--force` to overwrite the input. |
@@ -203,7 +203,7 @@ Some engine-level codes are defensive and are not normally reachable through val
 
 ## Composition rules
 
-- Inputs are local PNG/JPEG paths, in paint order. The format is detected from file content, so the extension does not matter. Repeated paths are allowed. EXIF orientation is applied before planning.
+- Inputs are local PNG, JPEG, WebP, or GIF paths, in paint order. The format is detected from file content, so the extension does not matter. Animated GIFs and WebPs use their first frame. Repeated paths are allowed. EXIF orientation is applied before planning.
 - `-` as an input reads one image from stdin (format detected from content); it may appear only once and is named `"-"` in the spec. Use `./-` for a file named `-`.
 - Images are never enlarged, and are only resized or cropped when asked. Output dimensions are derived from inputs and placement.
 - `--fit-height PIXELS|min` (or `--fit-width`) shrinks taller (wider) images to the target, keeping their aspect ratio; `min` matches the shortest (narrowest) input, which gives a stack equal heights (widths). Images already smaller stay as they are and produce a `fit_not_applied` warning. Not used by split.

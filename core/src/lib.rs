@@ -525,6 +525,106 @@ mod tests {
         assert_eq!((loaded.metadata.width, loaded.metadata.height), (4, 1));
     }
 
+    fn webp_bytes(image: &RgbaImage) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        image::codecs::webp::WebPEncoder::new_lossless(&mut bytes)
+            .write_image(
+                image.as_raw(),
+                image.width(),
+                image.height(),
+                image::ExtendedColorType::Rgba8,
+            )
+            .unwrap();
+        bytes
+    }
+
+    fn gif_bytes(frames: &[RgbaImage]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = image::codecs::gif::GifEncoder::new(&mut bytes);
+            encoder
+                .encode_frames(
+                    frames
+                        .iter()
+                        .map(|frame| image::Frame::new(frame.clone()))
+                        .collect::<Vec<_>>(),
+                )
+                .unwrap();
+        }
+        bytes
+    }
+
+    #[test]
+    fn webp_inputs_load_losslessly() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("shot.webp");
+        let original = RgbaImage::from_fn(3, 2, |x, y| Rgba([x as u8 * 80, y as u8 * 120, 7, 255]));
+        std::fs::write(&path, webp_bytes(&original)).unwrap();
+
+        assert_eq!(load_image(&path).unwrap().to_rgba8(), original);
+        assert_eq!(
+            load_image_from_bytes(&webp_bytes(&original))
+                .unwrap()
+                .to_rgba8(),
+            original
+        );
+    }
+
+    #[test]
+    fn webp_transparency_is_kept_for_blending() {
+        let original = RgbaImage::from_pixel(2, 2, Rgba([255, 0, 0, 0]));
+
+        assert_eq!(
+            load_image_from_bytes(&webp_bytes(&original))
+                .unwrap()
+                .to_rgba8()
+                .get_pixel(0, 0)
+                .0[3],
+            0
+        );
+    }
+
+    #[test]
+    fn gif_inputs_load() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("clip.gif");
+        std::fs::write(&path, gif_bytes(&[RgbaImage::from_pixel(4, 3, Rgba(RED))])).unwrap();
+
+        let loaded = load_image_with_metadata(&path).unwrap();
+
+        assert_eq!((loaded.metadata.width, loaded.metadata.height), (4, 3));
+        assert_eq!(loaded.image.to_rgba8().get_pixel(1, 1).0, RED);
+    }
+
+    #[test]
+    fn animated_gif_uses_its_first_frame() {
+        let bytes = gif_bytes(&[
+            RgbaImage::from_pixel(2, 2, Rgba(RED)),
+            RgbaImage::from_pixel(2, 2, Rgba(BLUE)),
+        ]);
+
+        assert_eq!(
+            load_image_from_bytes(&bytes)
+                .unwrap()
+                .to_rgba8()
+                .get_pixel(0, 0)
+                .0,
+            RED
+        );
+    }
+
+    #[test]
+    fn webp_and_gif_are_detected_behind_misleading_extensions() {
+        let directory = tempfile::tempdir().unwrap();
+        let webp = directory.path().join("actually-webp.png");
+        let gif = directory.path().join("actually-gif.jpg");
+        std::fs::write(&webp, webp_bytes(&RgbaImage::from_pixel(5, 1, Rgba(BLUE)))).unwrap();
+        std::fs::write(&gif, gif_bytes(&[RgbaImage::from_pixel(1, 5, Rgba(RED))])).unwrap();
+
+        assert_eq!(load_image(&webp).unwrap().dimensions(), (5, 1));
+        assert_eq!(load_image(&gif).unwrap().dimensions(), (1, 5));
+    }
+
     #[test]
     fn image_loader_applies_all_exif_orientations_before_measuring() {
         let directory = tempfile::tempdir().unwrap();

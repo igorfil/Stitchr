@@ -215,3 +215,42 @@ fn cli_renders_inputs_whose_extension_does_not_match_their_content() {
         }
     });
 }
+
+#[test]
+fn cli_renders_webp_and_gif_inputs() {
+    let directory = tempfile::tempdir().unwrap();
+    image::RgbaImage::from_pixel(2, 1, image::Rgba([255, 0, 0, 255]))
+        .save(directory.path().join("red.webp"))
+        .unwrap();
+    image::RgbaImage::from_pixel(1, 1, image::Rgba([0, 0, 255, 255]))
+        .save(directory.path().join("blue.gif"))
+        .unwrap();
+
+    let result = run_cli(
+        &directory,
+        &[
+            "red.webp",
+            "blue.gif",
+            "--layout",
+            "horizontal",
+            "-o",
+            "out.png",
+        ],
+    );
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    let image = image::open(directory.path().join("out.png"))
+        .unwrap()
+        .to_rgba8();
+    assert_canvas(&image, 3, 1, |x, _| {
+        if x < 2 {
+            [255, 0, 0, 255]
+        } else {
+            [0, 0, 255, 255]
+        }
+    });
+}

@@ -5,7 +5,7 @@ use crate::{
 };
 use clap::CommandFactory;
 use serde_json::{json, Value};
-use stitchr_core::{ExportFormat, FitTarget, ImageMetadata, LabelWarning};
+use stitchr_core::{CompositionSpec, ExportFormat, FitTarget, ImageMetadata, LabelWarning};
 
 pub(crate) const WARNING_CODES: &[(&str, &str)] = &[
     (
@@ -23,6 +23,10 @@ pub(crate) const WARNING_CODES: &[(&str, &str)] = &[
     (
         "format_mismatch",
         "--format writes a different format than the output file extension suggests.",
+    ),
+    (
+        "tiny_images",
+        "--max-width/--max-height shrinks an image below 16 px on a side, so it will be hard to see.",
     ),
     (
         "fit_not_applied",
@@ -187,6 +191,42 @@ pub(crate) fn format_warnings(cli: &Cli) -> Vec<Warning> {
             "extension_format": format_name(implied)
         }),
     }]
+}
+
+/// Images under this many pixels on a side are too small to show their content.
+const TINY_SIDE: u32 = 16;
+
+/// Images that `--max-width`/`--max-height` shrink to a barely visible size.
+pub(crate) fn scale_warnings(
+    spec: &CompositionSpec,
+    metadata: &[ImageMetadata],
+    scale: f64,
+) -> Vec<Warning> {
+    if scale >= 1.0 {
+        return Vec::new();
+    }
+    spec.images
+        .iter()
+        .zip(metadata)
+        .enumerate()
+        .filter(|(_, (placement, _))| placement.width.min(placement.height) < TINY_SIDE)
+        .map(|(index, (placement, source))| Warning {
+            code: "tiny_images",
+            reason: format!(
+                "--max-width/--max-height shrinks image {index} ({}) from {}x{} to {}x{} px (scale {scale:.3}); it will be hard to see",
+                source.name, source.width, source.height, placement.width, placement.height
+            ),
+            context: json!({
+                "index": index,
+                "width": placement.width,
+                "height": placement.height,
+                "source_width": source.width,
+                "source_height": source.height,
+                "scale": scale,
+                "min_side": TINY_SIDE
+            }),
+        })
+        .collect()
 }
 
 fn fit_warning(
@@ -893,6 +933,65 @@ mod tests {
     #[test]
     fn extension_alone_never_reports_a_mismatch() {
         assert!(format_warnings(&cli(&["a.png", "-o", "out.jpg"])).is_empty());
+    }
+
+    fn scaled_spec(sizes: &[(u32, u32)]) -> CompositionSpec {
+        stitchr_core::compose_spec(
+            &sizes
+                .iter()
+                .map(|&(width, height)| image("a.png", width, height))
+                .collect::<Vec<_>>(),
+            &stitchr_core::CompositionParams {
+                layout: stitchr_core::SpecLayout::Grid {
+                    columns: 2,
+                    spacing: 0,
+                    alignment: stitchr_core::Alignment::Start,
+                },
+                background_color: stitchr_core::RgbColor::default(),
+                background_gradient: None,
+                frame: None,
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn heavy_scaling_reports_images_below_sixteen_pixels() {
+        let spec = scaled_spec(&[(10, 3), (40, 40)]);
+        let warnings = scale_warnings(
+            &spec,
+            &[image("a.png", 640, 200), image("b.png", 2560, 2560)],
+            0.015625,
+        );
+
+        assert_eq!(
+            warnings.iter().map(Warning::json).collect::<Vec<_>>(),
+            [json!({
+                "code": "tiny_images",
+                "index": 0,
+                "width": 10,
+                "height": 3,
+                "source_width": 640,
+                "source_height": 200,
+                "scale": 0.015625,
+                "min_side": 16,
+                "reason": "--max-width/--max-height shrinks image 0 (a.png) from 640x200 to 10x3 px (scale 0.016); it will be hard to see"
+            })]
+        );
+    }
+
+    #[test]
+    fn images_at_the_threshold_do_not_warn() {
+        let spec = scaled_spec(&[(16, 16)]);
+
+        assert!(scale_warnings(&spec, &[image("a.png", 160, 160)], 0.1).is_empty());
+    }
+
+    #[test]
+    fn small_inputs_that_were_not_scaled_do_not_warn() {
+        let spec = scaled_spec(&[(4, 4)]);
+
+        assert!(scale_warnings(&spec, &[image("a.png", 4, 4)], 1.0).is_empty());
     }
 
     #[test]

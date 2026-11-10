@@ -388,3 +388,73 @@ fn fit_and_max_size_combine_into_one_resize() {
     assert_eq!(value["spec"]["width"], 75);
     assert_eq!(sizes(&value["spec"]), [(60, 30), (15, 30)]);
 }
+
+#[test]
+fn extreme_max_width_warns_about_tiny_images() {
+    let directory = screenshots();
+    let value = json_run(
+        &directory,
+        &["wide.png", "--max-width", "10", "-o", "out.png"],
+    );
+
+    assert_eq!(
+        (value["width"].clone(), value["height"].clone()),
+        (json!(10), json!(5))
+    );
+    assert!(value["scale"].as_f64().unwrap() < 0.1);
+    assert_eq!(value["warnings"][0]["code"], "tiny_images");
+    assert_eq!(value["warnings"][0]["width"], 10);
+}
+
+#[test]
+fn moderate_max_width_reports_the_scale_without_warning() {
+    let directory = screenshots();
+    let value = json_run(
+        &directory,
+        &["wide.png", "--max-width", "80", "-o", "out.png"],
+    );
+
+    assert_eq!(value["width"], 80);
+    assert!((value["scale"].as_f64().unwrap() - 0.5).abs() < 0.01);
+    assert_eq!(value["warnings"], json!([]));
+}
+
+#[test]
+fn unscaled_render_reports_a_scale_of_one() {
+    let directory = screenshots();
+    let value = json_run(&directory, &["wide.png", "-o", "out.png"]);
+
+    assert_eq!(value["scale"], 1.0);
+}
+
+#[test]
+fn strict_refuses_tiny_images() {
+    let directory = screenshots();
+    let output = run(
+        &directory,
+        &[
+            "--json",
+            "--strict",
+            "wide.png",
+            "--max-width",
+            "10",
+            "-o",
+            "out.png",
+        ],
+    );
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(!directory.path().join("out.png").exists());
+}
+
+#[test]
+fn human_mode_prints_the_tiny_image_warning() {
+    let directory = screenshots();
+    let output = run(
+        &directory,
+        &["wide.png", "--max-width", "10", "-o", "out.png"],
+    );
+
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .starts_with("stitchr: warning: --max-width/--max-height shrinks image 0 (wide.png) from 160x80 to 10x5 px"));
+}

@@ -330,6 +330,7 @@ mod tests {
                 "label_overflow",
                 "missing_glyphs",
                 "format_mismatch",
+                "tiny_images",
                 "fit_not_applied"
             ]
         );

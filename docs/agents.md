@@ -80,6 +80,7 @@ Success:
   "width": 640,
   "height": 400,
   "format": "png",
+  "scale": 1.0,
   "warnings": []
 }
 ```
@@ -101,7 +102,7 @@ Successful response fields depend on the operation:
 
 | Operation | Additional fields |
 | --- | --- |
-| Render | `output` (string), `output_abs` (string or `null`), `width` and `height` (integers), `format` (`"png"` or `"jpeg"`), `warnings` (array) |
+| Render | `output` (string), `output_abs` (string or `null`), `width` and `height` (integers), `format` (`"png"` or `"jpeg"`), `scale` (number, below 1 when `--max-width`/`--max-height` shrank the images), `warnings` (array) |
 | `--print-spec` | `spec` (object), `warnings` (array) |
 | `--help-json` / `--schema` | `schema` (object) |
 | `--help` / `-h` | `help` (string) |
@@ -119,6 +120,7 @@ A request can succeed but probably not do what was intended. Renders and `--prin
 | `label_overflow` | `index`, `label`, `tab_width`, `available_width` | A label tab is wider than its image (or split band) and extends past it. |
 | `missing_glyphs` | `index`, `label`, `characters` | The label font cannot draw these characters; they render as gaps. Pass `--font` with a font that covers them. |
 | `format_mismatch` | `option`, `format`, `path`, `extension_format` | `--format` writes a different format than the output extension suggests, for example JPEG data in `out.png`. |
+| `tiny_images` | `index`, `width`, `height`, `source_width`, `source_height`, `scale`, `min_side` | `--max-width`/`--max-height` shrinks an image below 16 px on a side. Raise the limit, or reduce the number of inputs or the spacing. |
 | `fit_not_applied` | `option`, `index`, `size`, `target` | An image is already smaller than the `--fit-height`/`--fit-width` target, so it is left unchanged. |
 
 ```json

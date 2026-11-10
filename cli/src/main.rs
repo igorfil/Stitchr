@@ -329,6 +329,7 @@ enum Success {
     },
     Rendered {
         result: io::ExportResult,
+        scale: f64,
         warnings: Vec<Warning>,
     },
 }
@@ -340,12 +341,13 @@ impl Success {
             Self::Version => json!({ "version": env!("CARGO_PKG_VERSION") }),
             Self::Schema(schema) => json!({ "schema": schema }),
             Self::Spec { spec, .. } => json!({ "spec": spec }),
-            Self::Rendered { result, .. } => json!({
+            Self::Rendered { result, scale, .. } => json!({
                 "output": result.output.to_string_lossy(),
                 "output_abs": result.output_abs.as_ref().map(|path| path.to_string_lossy()),
                 "width": result.width,
                 "height": result.height,
-                "format": result.format
+                "format": result.format,
+                "scale": scale
             }),
         };
         if let Self::Spec { warnings, .. } | Self::Rendered { warnings, .. } = self {
@@ -383,7 +385,12 @@ fn spec_json(spec: &CompositionSpec) -> Result<Value, CliError> {
     Ok(value)
 }
 
-fn collect_warnings(cli: &Cli, spec: &CompositionSpec, metadata: &[ImageMetadata]) -> Vec<Warning> {
+fn collect_warnings(
+    cli: &Cli,
+    spec: &CompositionSpec,
+    metadata: &[ImageMetadata],
+    scale: f64,
+) -> Vec<Warning> {
     let labels = spec
         .frame
         .as_ref()
@@ -391,6 +398,7 @@ fn collect_warnings(cli: &Cli, spec: &CompositionSpec, metadata: &[ImageMetadata
     let mut collected = warnings::option_warnings(cli);
     collected.extend(warnings::format_warnings(cli));
     collected.extend(warnings::fit_warnings(cli, metadata));
+    collected.extend(warnings::scale_warnings(spec, metadata, scale));
     collected.extend(warnings::label_warnings(&label_warnings(spec), labels));
     collected
 }
@@ -562,7 +570,7 @@ fn execute(cli: Cli) -> Result<Success, CliError> {
         Some(source) => request_from_spec(source)?,
         None => request_from_arguments(&cli)?,
     };
-    let warnings = collect_warnings(&cli, &request.spec, &request.metadata);
+    let warnings = collect_warnings(&cli, &request.spec, &request.metadata, request.scale);
     if cli.strict && !warnings.is_empty() {
         return Err(CliError::strict(&warnings));
     }
@@ -579,7 +587,11 @@ fn execute(cli: Cli) -> Result<Success, CliError> {
     let composed = render_spec(&request.spec, &images)
         .map_err(|error| CliError::from(error).with_input_paths(&request.inputs))?;
     let result = io::export(cli.destination(), &composed)?;
-    Ok(Success::Rendered { result, warnings })
+    Ok(Success::Rendered {
+        result,
+        scale: request.scale,
+        warnings,
+    })
 }
 
 fn json_requested(args: &[OsString]) -> bool {
@@ -1026,6 +1038,7 @@ mod tests {
                 height: 4,
                 format: "png",
             },
+            scale: 1.0,
             warnings: Vec::new(),
         };
 
@@ -1033,7 +1046,8 @@ mod tests {
             success.json(),
             json!({
                 "schema_version": SCHEMA_VERSION, "ok": true, "output": "out.png",
-                "output_abs": "/work/out.png", "width": 3, "height": 4, "format": "png", "warnings": []
+                "output_abs": "/work/out.png", "width": 3, "height": 4, "format": "png",
+                "scale": 1.0, "warnings": []
             })
         );
         assert_eq!(success.human().as_deref(), Some("out.png"));
@@ -1049,6 +1063,7 @@ mod tests {
                 height: 1,
                 format: "png",
             },
+            scale: 1.0,
             warnings: Vec::new(),
         };
 

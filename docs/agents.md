@@ -55,7 +55,8 @@ Success:
   "output": "split.png",
   "width": 640,
   "height": 400,
-  "format": "png"
+  "format": "png",
+  "warnings": []
 }
 ```
 
@@ -76,13 +77,31 @@ Successful response fields depend on the operation:
 
 | Operation | Additional fields |
 | --- | --- |
-| Render | `output` (string), `width` and `height` (integers), `format` (`"png"` or `"jpeg"`) |
-| `--print-spec` | `spec` (object) |
+| Render | `output` (string), `width` and `height` (integers), `format` (`"png"` or `"jpeg"`), `warnings` (array) |
+| `--print-spec` | `spec` (object), `warnings` (array) |
 | `--help-json` / `--schema` | `schema` (object) |
 | `--help` / `-h` | `help` (string) |
 | `--version` / `-V` | `version` (program version string) |
 
 `spec` contains `schema_version`, `images`, `layout`, `width`, `height`, and `background_color`. Coordinates and dimensions are integers in pixels; the RGB background has integer `red`, `green`, and `blue` channels in `0..255`.
+
+### Warnings
+
+A request can succeed but probably not do what was intended. Renders and `--print-spec` then list `warnings`, which is an empty array when there is nothing to report. Each warning has a stable `code` and a human-readable `reason`:
+
+| Code | Extra fields | Meaning |
+| --- | --- | --- |
+| `option_ignored` | `option` | An explicitly passed option has no effect, for example `--spacing` with `--layout split`, label styling without `--label`, `--gradient-angle` with a radial gradient, `--jpeg-quality` for PNG output, or output options with `--print-spec`. |
+| `label_overflow` | `index`, `label`, `tab_width`, `available_width` | A label tab is wider than its image (or split band) and extends past it. |
+| `missing_glyphs` | `index`, `label`, `characters` | The bundled font cannot draw these characters; they render as gaps. |
+
+```json
+{"code": "option_ignored", "option": "--spacing", "reason": "--spacing is not used by the split layout"}
+```
+
+Without `--json`, each warning is printed to stderr as `stitchr: warning: <reason>`. With `--json`, warnings appear only in the JSON object and stderr stays empty.
+
+`--strict` turns any warning into an `invalid_arguments` error (exit code 2) before anything is written. It also applies to `--print-spec`, so a request can be checked without rendering.
 
 Built-in help/version flags are handled during argument parsing. Otherwise, `--help-json` takes precedence over `--print-spec`, which takes precedence over rendering. Neither discovery nor spec inspection writes an output image.
 
@@ -115,7 +134,7 @@ Branch on `error.code`, not `error.message`. Messages may include paths and oper
 
 | Code | Meaning / recovery |
 | --- | --- |
-| `invalid_arguments` | Missing inputs, unknown flags, invalid enum/color/numeric values, or wrong argument arity. Also: `-` used as an input more than once, `-o -` with `--json`, or `-o -` without `--format`. Inspect the schema and correct the arguments. |
+| `invalid_arguments` | Missing inputs, unknown flags, invalid enum/color/numeric values, wrong argument arity, or a repeated single-use option such as `--background-gradient`. Also: `-` used as an input more than once, `-o -` with `--json`, `-o -` without `--format`, or any warning under `--strict`. Inspect the schema and correct the arguments. |
 | `input_error` | Input is missing, unreadable, corrupt, or unsupported. Check its path (or stdin bytes for `-`) and PNG/JPEG encoding. |
 | `unsupported_output_format` | Choose an output ending in `.png`, `.jpg`, or `.jpeg`, or pass `--format png\|jpeg`. |
 | `output_error` | Check the destination directory, permissions, available space, and whether the destination is a directory. |

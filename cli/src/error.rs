@@ -22,6 +22,11 @@ impl CliError {
         self.code
     }
 
+    #[cfg(test)]
+    pub(crate) fn message(&self) -> &str {
+        &self.message
+    }
+
     pub(crate) fn exit_code(&self) -> u8 {
         if self.code == "invalid_arguments" {
             2

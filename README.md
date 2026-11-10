@@ -54,10 +54,10 @@ stitchr --json docs/examples/light.png docs/examples/dark.png \
 ```
 
 ```json
-{"format":"png","height":400,"ok":true,"output":"comparison.png","schema_version":1,"width":640}
+{"format":"png","height":400,"ok":true,"output":"comparison.png","schema_version":1,"warnings":[],"width":640}
 ```
 
-Errors use `{"schema_version":1,"ok":false,"error":{"code":"...","message":"..."}}` and a nonzero exit code. `--json` also wraps spec/schema queries and keeps help and argument errors machine-readable. The [agent guide](docs/agents.md) documents mode combinations, exit codes, recovery, and compatibility rules.
+Errors use `{"schema_version":1,"ok":false,"error":{"code":"...","message":"..."}}` and a nonzero exit code. `--json` also wraps spec/schema queries and keeps help and argument errors machine-readable. Options that have no effect (such as `--spacing` with `--layout split`) and labels that overflow their image are reported as `warnings`; add `--strict` to make them errors. The [agent guide](docs/agents.md) documents mode combinations, exit codes, recovery, and compatibility rules.
 
 ### Output behavior
 

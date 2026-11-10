@@ -2,14 +2,18 @@ mod composer;
 mod error;
 mod io;
 mod schema;
+mod warnings;
 
-use clap::{ArgAction, Parser, ValueEnum};
+use clap::{parser::ValueSource, ArgAction, CommandFactory, FromArgMatches, Parser, ValueEnum};
 use composer::{CliComposeParams, CliComposer};
 use error::CliError;
 use io::is_stdio;
 use serde_json::{json, Value};
-use std::{path::PathBuf, process::ExitCode};
-use stitchr_core::{render_spec, CompositionSpec, LoadedImage, RgbColor, DEFAULT_JPEG_QUALITY};
+use std::{ffi::OsString, path::PathBuf, process::ExitCode};
+use stitchr_core::{
+    label_warnings, render_spec, CompositionSpec, ImageMetadata, RgbColor, DEFAULT_JPEG_QUALITY,
+};
+use warnings::Warning;
 
 const SCHEMA_VERSION: u32 = 1;
 
@@ -159,6 +163,12 @@ struct Cli {
 
     #[arg(long, action = ArgAction::SetTrue, help = "Print versioned JSON results and errors to stdout")]
     json: bool,
+
+    #[arg(long, action = ArgAction::SetTrue, help = "Fail with invalid_arguments instead of rendering when there are warnings (boolean; default: false)")]
+    strict: bool,
+
+    #[arg(skip)]
+    explicit: Vec<String>,
 }
 
 fn non_negative(value: &str) -> Result<u32, String> {
@@ -200,8 +210,14 @@ enum Success {
     Help(String),
     Version,
     Schema(Value),
-    Spec(Value),
-    Rendered(io::ExportResult),
+    Spec {
+        spec: Value,
+        warnings: Vec<Warning>,
+    },
+    Rendered {
+        result: io::ExportResult,
+        warnings: Vec<Warning>,
+    },
 }
 
 impl Success {
@@ -210,14 +226,17 @@ impl Success {
             Self::Help(help) => json!({ "help": help }),
             Self::Version => json!({ "version": env!("CARGO_PKG_VERSION") }),
             Self::Schema(schema) => json!({ "schema": schema }),
-            Self::Spec(spec) => json!({ "spec": spec }),
-            Self::Rendered(result) => json!({
+            Self::Spec { spec, .. } => json!({ "spec": spec }),
+            Self::Rendered { result, .. } => json!({
                 "output": result.output.to_string_lossy(),
                 "width": result.width,
                 "height": result.height,
                 "format": result.format
             }),
         };
+        if let Self::Spec { warnings, .. } | Self::Rendered { warnings, .. } = self {
+            response["warnings"] = warnings.iter().map(Warning::json).collect();
+        }
         response["schema_version"] = json!(SCHEMA_VERSION);
         response["ok"] = json!(true);
         response
@@ -228,22 +247,18 @@ impl Success {
             Self::Help(help) => Some(help.clone()),
             Self::Version => Some(format!("stitchr {}", env!("CARGO_PKG_VERSION"))),
             Self::Schema(schema) => Some(schema.to_string()),
-            Self::Spec(spec) => Some(format!("{spec:#}")),
-            Self::Rendered(result) if is_stdio(&result.output) => None,
-            Self::Rendered(result) => Some(result.output.display().to_string()),
+            Self::Spec { spec, .. } => Some(format!("{spec:#}")),
+            Self::Rendered { result, .. } if is_stdio(&result.output) => None,
+            Self::Rendered { result, .. } => Some(result.output.display().to_string()),
         }
     }
-}
 
-fn compose_loaded_images(
-    loaded: &[LoadedImage],
-    params: CliComposeParams<'_>,
-) -> Result<CompositionSpec, CliError> {
-    let metadata = loaded
-        .iter()
-        .map(|image| image.metadata.clone())
-        .collect::<Vec<_>>();
-    CliComposer::compose(&metadata, params).map_err(CliError::from)
+    fn warnings(&self) -> &[Warning] {
+        match self {
+            Self::Spec { warnings, .. } | Self::Rendered { warnings, .. } => warnings,
+            Self::Help(_) | Self::Version | Self::Schema(_) => &[],
+        }
+    }
 }
 
 fn spec_json(spec: &CompositionSpec) -> Result<Value, CliError> {
@@ -254,15 +269,47 @@ fn spec_json(spec: &CompositionSpec) -> Result<Value, CliError> {
     Ok(value)
 }
 
+fn collect_warnings(cli: &Cli, spec: &CompositionSpec, metadata: &[ImageMetadata]) -> Vec<Warning> {
+    let mut collected = warnings::option_warnings(cli);
+    collected.extend(warnings::label_warnings(
+        &label_warnings(spec, metadata),
+        &cli.label,
+    ));
+    collected
+}
+
+fn strict_error(warnings: &[Warning]) -> CliError {
+    let reasons = warnings
+        .iter()
+        .map(|warning| warning.reason.as_str())
+        .collect::<Vec<_>>()
+        .join("; ");
+    CliError::new(
+        "invalid_arguments",
+        format!("--strict treats warnings as errors: {reasons}"),
+    )
+}
+
 fn execute(cli: Cli) -> Result<Success, CliError> {
     if cli.help_json {
         return Ok(Success::Schema(schema::schema()));
     }
     io::validate_stdin(&cli.images)?;
     let loaded = io::load_images(&cli.images)?;
-    let spec = compose_loaded_images(&loaded, cli.compose_params())?;
+    let metadata = loaded
+        .iter()
+        .map(|image| image.metadata.clone())
+        .collect::<Vec<_>>();
+    let spec = CliComposer::compose(&metadata, cli.compose_params())?;
+    let warnings = collect_warnings(&cli, &spec, &metadata);
+    if cli.strict && !warnings.is_empty() {
+        return Err(strict_error(&warnings));
+    }
     if cli.print_spec {
-        return spec_json(&spec).map(Success::Spec);
+        return Ok(Success::Spec {
+            spec: spec_json(&spec)?,
+            warnings,
+        });
     }
     io::validate_stdout(&cli.output, cli.format, cli.json)?;
     let images = loaded
@@ -270,10 +317,11 @@ fn execute(cli: Cli) -> Result<Success, CliError> {
         .map(|loaded| loaded.image)
         .collect::<Vec<_>>();
     let composed = render_spec(&spec, &images)?;
-    io::export(cli.output, &composed, cli.format, cli.jpeg_quality).map(Success::Rendered)
+    let result = io::export(cli.output, &composed, cli.format, cli.jpeg_quality)?;
+    Ok(Success::Rendered { result, warnings })
 }
 
-fn json_requested(args: &[std::ffi::OsString]) -> bool {
+fn json_requested(args: &[OsString]) -> bool {
     args.iter()
         .skip(1)
         .take_while(|argument| *argument != "--")
@@ -285,11 +333,23 @@ fn json_requested(args: &[std::ffi::OsString]) -> bool {
         })
 }
 
-fn parse(
-    args: Vec<std::ffi::OsString>,
-    json_output: bool,
-) -> Result<Cli, Result<Success, CliError>> {
-    Cli::try_parse_from(args).map_err(|error| {
+fn parse_cli(args: Vec<OsString>) -> Result<Cli, clap::Error> {
+    let command = Cli::command();
+    let ids = command
+        .get_arguments()
+        .map(|arg| arg.get_id().to_string())
+        .collect::<Vec<_>>();
+    let matches = command.try_get_matches_from(args)?;
+    let mut cli = Cli::from_arg_matches(&matches)?;
+    cli.explicit = ids
+        .into_iter()
+        .filter(|id| matches.value_source(id) == Some(ValueSource::CommandLine))
+        .collect();
+    Ok(cli)
+}
+
+fn parse(args: Vec<OsString>, json_output: bool) -> Result<Cli, Result<Success, CliError>> {
+    parse_cli(args).map_err(|error| {
         if !json_output {
             error.exit();
         }
@@ -312,8 +372,14 @@ fn main() -> ExitCode {
         Ok(success) => {
             if json_output {
                 println!("{}", success.json());
-            } else if let Some(text) = success.human() {
-                println!("{text}");
+            } else {
+                success
+                    .warnings()
+                    .iter()
+                    .for_each(|warning| eprintln!("stitchr: warning: {}", warning.reason));
+                if let Some(text) = success.human() {
+                    println!("{text}");
+                }
             }
             ExitCode::SUCCESS
         }
@@ -601,7 +667,11 @@ mod tests {
 
     fn render(cli: Cli) -> io::ExportResult {
         let loaded = io::load_images(&cli.images).unwrap();
-        let spec = compose_loaded_images(&loaded, cli.compose_params()).unwrap();
+        let metadata = loaded
+            .iter()
+            .map(|image| image.metadata.clone())
+            .collect::<Vec<_>>();
+        let spec = CliComposer::compose(&metadata, cli.compose_params()).unwrap();
         let pixels = loaded
             .iter()
             .map(|image| image.image.clone())
@@ -679,18 +749,21 @@ mod tests {
 
     #[test]
     fn rendered_success_json_has_the_render_fields() {
-        let success = Success::Rendered(io::ExportResult {
-            output: PathBuf::from("out.png"),
-            width: 3,
-            height: 4,
-            format: "png",
-        });
+        let success = Success::Rendered {
+            result: io::ExportResult {
+                output: PathBuf::from("out.png"),
+                width: 3,
+                height: 4,
+                format: "png",
+            },
+            warnings: Vec::new(),
+        };
 
         assert_eq!(
             success.json(),
             json!({
                 "schema_version": SCHEMA_VERSION, "ok": true, "output": "out.png",
-                "width": 3, "height": 4, "format": "png"
+                "width": 3, "height": 4, "format": "png", "warnings": []
             })
         );
         assert_eq!(success.human().as_deref(), Some("out.png"));
@@ -698,12 +771,15 @@ mod tests {
 
     #[test]
     fn stdout_render_prints_nothing_in_human_mode() {
-        let success = Success::Rendered(io::ExportResult {
-            output: PathBuf::from("-"),
-            width: 1,
-            height: 1,
-            format: "png",
-        });
+        let success = Success::Rendered {
+            result: io::ExportResult {
+                output: PathBuf::from("-"),
+                width: 1,
+                height: 1,
+                format: "png",
+            },
+            warnings: Vec::new(),
+        };
 
         assert_eq!(success.human(), None);
     }
@@ -713,8 +789,14 @@ mod tests {
         let payload = json!({ "a": 1 });
 
         assert_eq!(
-            Success::Spec(payload.clone()).json(),
-            json!({ "schema_version": SCHEMA_VERSION, "ok": true, "spec": payload })
+            Success::Spec {
+                spec: payload.clone(),
+                warnings: Vec::new()
+            }
+            .json(),
+            json!({
+                "schema_version": SCHEMA_VERSION, "ok": true, "spec": payload, "warnings": []
+            })
         );
         assert_eq!(
             Success::Schema(payload.clone()).json(),
@@ -735,7 +817,12 @@ mod tests {
 
     #[test]
     fn spec_query_human_output_is_pretty_printed() {
-        let text = Success::Spec(json!({ "a": 1 })).human().unwrap();
+        let text = Success::Spec {
+            spec: json!({ "a": 1 }),
+            warnings: Vec::new(),
+        }
+        .human()
+        .unwrap();
 
         assert_eq!(text, "{\n  \"a\": 1\n}");
     }
@@ -757,5 +844,202 @@ mod tests {
 
         assert_eq!(value["schema_version"], SCHEMA_VERSION);
         assert_eq!(value["width"], 2);
+    }
+
+    fn args(values: &[&str]) -> Vec<OsString> {
+        std::iter::once("stitchr")
+            .chain(values.iter().copied())
+            .map(OsString::from)
+            .collect()
+    }
+
+    fn fixture() -> tempfile::TempDir {
+        let directory = tempfile::tempdir().unwrap();
+        export_image(
+            &DynamicImage::new_rgb8(4, 3),
+            directory.path().join("a.png"),
+            ExportFormat::Png,
+        )
+        .unwrap();
+        directory
+    }
+
+    fn execute_in(directory: &tempfile::TempDir, values: &[&str]) -> Result<Success, CliError> {
+        let path = |value: &str| {
+            if value.ends_with(".png") || value.ends_with(".jpg") {
+                directory.path().join(value).to_string_lossy().into_owned()
+            } else {
+                value.to_owned()
+            }
+        };
+        let values = values.iter().map(|value| path(value)).collect::<Vec<_>>();
+        let values = values.iter().map(String::as_str).collect::<Vec<_>>();
+        execute(parse_cli(args(&values)).unwrap())
+    }
+
+    fn warning_codes(success: &Success) -> Vec<&'static str> {
+        success
+            .warnings()
+            .iter()
+            .map(|warning| warning.code)
+            .collect()
+    }
+
+    #[test]
+    fn parse_cli_records_only_options_given_on_the_command_line() {
+        let cli = parse_cli(args(&["a.png", "--spacing", "0", "--layout", "grid"])).unwrap();
+
+        assert_eq!(cli.explicit, ["images", "layout", "spacing"]);
+    }
+
+    #[test]
+    fn parse_cli_records_nothing_beyond_inputs_for_defaults() {
+        let cli = parse_cli(args(&["a.png"])).unwrap();
+
+        assert_eq!(cli.explicit, ["images"]);
+    }
+
+    #[test]
+    fn print_spec_carries_ignored_option_warnings() {
+        let directory = fixture();
+        let success = execute_in(
+            &directory,
+            &[
+                "a.png",
+                "--layout",
+                "split",
+                "--spacing",
+                "4",
+                "--print-spec",
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(warning_codes(&success), ["option_ignored"]);
+        assert_eq!(
+            success.json()["warnings"],
+            json!([{
+                "code": "option_ignored",
+                "option": "--spacing",
+                "reason": "--spacing is not used by the split layout"
+            }])
+        );
+    }
+
+    #[test]
+    fn render_carries_label_warnings() {
+        let directory = fixture();
+        let success = execute_in(
+            &directory,
+            &[
+                "a.png",
+                "--label",
+                "Far too long for four pixels",
+                "-o",
+                "out.png",
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(warning_codes(&success), ["label_overflow"]);
+        assert!(directory.path().join("out.png").exists());
+    }
+
+    #[test]
+    fn missing_glyph_warning_comes_after_overflow_for_the_same_label() {
+        let directory = fixture();
+        let success =
+            execute_in(&directory, &["a.png", "--label", "日本", "--print-spec"]).unwrap();
+
+        assert_eq!(
+            warning_codes(&success),
+            ["label_overflow", "missing_glyphs"]
+        );
+    }
+
+    #[test]
+    fn clean_invocation_has_an_empty_warning_list() {
+        let directory = fixture();
+        let success = execute_in(&directory, &["a.png", "--print-spec"]).unwrap();
+
+        assert_eq!(success.json()["warnings"], json!([]));
+    }
+
+    #[test]
+    fn strict_turns_warnings_into_an_argument_error_without_writing() {
+        let directory = fixture();
+        let error = execute_in(
+            &directory,
+            &[
+                "a.png",
+                "--strict",
+                "--layout",
+                "split",
+                "--columns",
+                "3",
+                "-o",
+                "out.png",
+            ],
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code(), "invalid_arguments");
+        assert_eq!(error.exit_code(), 2);
+        assert!(!directory.path().join("out.png").exists());
+    }
+
+    #[test]
+    fn strict_error_lists_every_warning_reason() {
+        let directory = fixture();
+        let error = execute_in(
+            &directory,
+            &[
+                "a.png",
+                "--strict",
+                "--layout",
+                "split",
+                "--columns",
+                "3",
+                "--spacing",
+                "1",
+                "--print-spec",
+            ],
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error.message(),
+            "--strict treats warnings as errors: --columns is not used by the split layout; --spacing is not used by the split layout"
+        );
+    }
+
+    #[test]
+    fn strict_without_warnings_renders_normally() {
+        let directory = fixture();
+        let success = execute_in(&directory, &["a.png", "--strict", "-o", "out.png"]).unwrap();
+
+        assert_eq!(warning_codes(&success), Vec::<&str>::new());
+        assert!(directory.path().join("out.png").exists());
+    }
+
+    #[test]
+    fn strict_also_applies_to_spec_inspection() {
+        let directory = fixture();
+
+        assert!(execute_in(
+            &directory,
+            &["a.png", "--strict", "--divider", "2", "--print-spec"]
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn schema_query_ignores_warnings_and_strict() {
+        let success =
+            execute(parse_cli(args(&["--help-json", "--strict", "--divider", "3"])).unwrap())
+                .unwrap();
+
+        assert!(matches!(success, Success::Schema(_)));
+        assert_eq!(success.warnings().len(), 0);
     }
 }

@@ -71,7 +71,7 @@ fn render_reports_written_file_dimensions_and_normalized_format() {
             value,
             json!({
                 "schema_version": 1, "ok": true, "output": output,
-                "width": 6, "height": 4, "format": format
+                "width": 6, "height": 4, "format": format, "warnings": []
             })
         );
         let image = stitchr_core::load_image(directory.path().join(output)).unwrap();

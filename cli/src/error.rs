@@ -17,7 +17,20 @@ impl CliError {
         }
     }
 
-    pub(crate) fn report(self, json_output: bool, exit_code: ExitCode) -> ExitCode {
+    #[cfg(test)]
+    pub(crate) fn code(&self) -> &'static str {
+        self.code
+    }
+
+    pub(crate) fn exit_code(&self) -> u8 {
+        if self.code == "invalid_arguments" {
+            2
+        } else {
+            1
+        }
+    }
+
+    pub(crate) fn report(self, json_output: bool) -> ExitCode {
         if json_output {
             println!(
                 "{}",
@@ -30,7 +43,7 @@ impl CliError {
         } else {
             eprintln!("stitchr: {}", self.message);
         }
-        exit_code
+        ExitCode::from(self.exit_code())
     }
 }
 
@@ -47,5 +60,67 @@ impl From<ComposeError> for CliError {
             ComposeError::SizeOverflow => "canvas_too_large",
         };
         Self::new(code, error.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn argument_errors_exit_with_two() {
+        assert_eq!(CliError::new("invalid_arguments", "bad").exit_code(), 2);
+    }
+
+    #[test]
+    fn processing_errors_exit_with_one() {
+        for code in [
+            "input_error",
+            "output_error",
+            "unsupported_output_format",
+            "canvas_too_large",
+            "serialization_error",
+        ] {
+            assert_eq!(CliError::new(code, "failed").exit_code(), 1, "{code}");
+        }
+    }
+
+    #[test]
+    fn compose_errors_map_to_stable_codes() {
+        for (error, code) in [
+            (ComposeError::NoImages, "no_images"),
+            (
+                ComposeError::InvalidImageDimensions,
+                "invalid_image_dimensions",
+            ),
+            (ComposeError::InvalidColumns, "invalid_columns"),
+            (
+                ComposeError::ImageCountMismatch {
+                    expected: 1,
+                    actual: 2,
+                },
+                "image_count_mismatch",
+            ),
+            (
+                ComposeError::FreeformPositionCount {
+                    expected: 1,
+                    actual: 2,
+                },
+                "freeform_position_count",
+            ),
+            (ComposeError::SplitSizeMismatch, "split_size_mismatch"),
+            (
+                ComposeError::LabelCountMismatch {
+                    expected: 1,
+                    actual: 2,
+                },
+                "label_count_mismatch",
+            ),
+            (ComposeError::SizeOverflow, "canvas_too_large"),
+        ] {
+            let error = CliError::from(error);
+            assert_eq!(error.code(), code);
+            assert_eq!(error.exit_code(), 1, "{code}");
+        }
     }
 }

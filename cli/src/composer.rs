@@ -101,25 +101,6 @@ mod tests {
     use clap::Parser;
     use stitchr_core::ImagePlacement;
 
-    fn cli_params(cli: &Cli) -> CliComposeParams<'_> {
-        CliComposeParams {
-            layout: cli.layout,
-            columns: cli.columns,
-            spacing: cli.spacing,
-            alignment: cli.alignment,
-            background_color: cli.background_color,
-            positions: &cli.position,
-            divider: cli.divider,
-            labels: &cli.label,
-            border_width: cli.border_width,
-            border_color: cli.border_color,
-            label_size: cli.label_size,
-            background_gradient: &cli.background_gradient,
-            gradient_kind: cli.gradient_kind,
-            gradient_angle: cli.gradient_angle,
-        }
-    }
-
     fn compose_cli(cli: &Cli) -> CompositionSpec {
         let images = cli
             .images
@@ -134,7 +115,7 @@ mod tests {
                 height: 2,
             })
             .collect::<Vec<_>>();
-        CliComposer::compose(&images, cli_params(cli)).unwrap()
+        CliComposer::compose(&images, cli.compose_params()).unwrap()
     }
 
     fn compose_args(args: &[&str]) -> CompositionSpec {
@@ -416,7 +397,7 @@ mod tests {
             },
         ];
 
-        let spec = CliComposer::compose(&images, cli_params(&cli)).unwrap();
+        let spec = CliComposer::compose(&images, cli.compose_params()).unwrap();
 
         assert_eq!((spec.width, spec.height), (8, 5));
         assert_eq!(
@@ -466,7 +447,7 @@ mod tests {
             },
         ];
 
-        let spec = CliComposer::compose(&images, cli_params(&cli)).unwrap();
+        let spec = CliComposer::compose(&images, cli.compose_params()).unwrap();
 
         assert_eq!(
             spec.images

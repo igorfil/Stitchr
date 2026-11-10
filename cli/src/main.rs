@@ -1,23 +1,17 @@
 mod composer;
 mod error;
+mod io;
+mod schema;
 
-use clap::{Arg, ArgAction, CommandFactory, Parser, ValueEnum, ValueHint};
+use clap::{ArgAction, Parser, ValueEnum};
 use composer::{CliComposeParams, CliComposer};
 use error::CliError;
+use io::is_stdio;
 use serde_json::{json, Value};
-use std::{
-    io::{Read, Write},
-    path::{Path, PathBuf},
-    process::ExitCode,
-};
-use stitchr_core::{
-    export_image_with_quality, load_image_from_bytes, load_image_with_metadata, render_spec,
-    write_image, CompositionSpec, DynamicImage, ExportFormat, ImageMetadata, LoadedImage, RgbColor,
-    DEFAULT_JPEG_QUALITY,
-};
+use std::{path::PathBuf, process::ExitCode};
+use stitchr_core::{render_spec, CompositionSpec, LoadedImage, RgbColor, DEFAULT_JPEG_QUALITY};
 
 const SCHEMA_VERSION: u32 = 1;
-const STDIO_PATH: &str = "-";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum CliFormat {
@@ -180,156 +174,65 @@ fn non_negative(value: &str) -> Result<u32, String> {
         })
 }
 
-fn argument_schema(arg: &Arg) -> Value {
-    let choices: Vec<_> = arg
-        .get_possible_values()
-        .into_iter()
-        .filter(|value| !value.is_hide_set())
-        .map(|value| value.get_name().to_owned())
-        .collect();
-    let boolean = matches!(
-        arg.get_action(),
-        ArgAction::SetTrue | ArgAction::Help | ArgAction::Version
-    );
-    let path = arg.get_value_hint() == ValueHint::AnyPath;
-    let color = matches!(
-        arg.get_id().as_str(),
-        "background_color" | "border_color" | "background_gradient"
-    );
-    let text = arg.get_id().as_str() == "label";
-    let value_type = if boolean {
-        "boolean"
-    } else if path || color || text || !choices.is_empty() {
-        "string"
-    } else {
-        "integer"
-    };
-    let default = if boolean {
-        json!(false)
-    } else {
-        match arg.get_default_values().first() {
-            Some(value) if value_type == "integer" => value
-                .to_string_lossy()
-                .parse::<u64>()
-                .map_or(Value::Null, |number| json!(number)),
-            Some(value) => json!(value.to_string_lossy()),
-            None => Value::Null,
+impl Cli {
+    fn compose_params(&self) -> CliComposeParams<'_> {
+        CliComposeParams {
+            layout: self.layout,
+            columns: self.columns,
+            spacing: self.spacing,
+            alignment: self.alignment,
+            background_color: self.background_color,
+            positions: &self.position,
+            divider: self.divider,
+            labels: &self.label,
+            border_width: self.border_width,
+            border_color: self.border_color,
+            label_size: self.label_size,
+            background_gradient: &self.background_gradient,
+            gradient_kind: self.gradient_kind,
+            gradient_angle: self.gradient_angle,
         }
-    };
-    let arity = arg.get_num_args();
-
-    json!({
-        "name": arg.get_id().as_str(),
-        "long": arg.get_long().map(|long| format!("--{long}")),
-        "short": arg.get_short().map(|short| format!("-{short}")),
-        "aliases": arg.get_visible_aliases().unwrap_or_default().into_iter().map(|alias| format!("--{alias}")).collect::<Vec<_>>(),
-        "kind": if arg.is_positional() { "positional" } else { "option" },
-        "type": value_type,
-        "format": if path { Some("path") } else if color { Some("color") } else { None },
-        "enum": choices,
-        "default": default,
-        "required": arg.is_required_set() || arg.is_positional(),
-        "required_unless": if arg.is_positional() { vec!["--help-json", "--schema"] } else { vec![] },
-        "repeatable": matches!(arg.get_action(), ArgAction::Append),
-        "values_per_occurrence": {
-            "min": arity.map(|range| range.min_values()).unwrap_or(0),
-            "max": arity.and_then(|range| (range.max_values() != usize::MAX).then_some(range.max_values()))
-        },
-        "value_names": if boolean { None } else { arg.get_value_names().map(|names| names.iter().map(ToString::to_string).collect::<Vec<_>>()) },
-        "help": arg.get_help().map(ToString::to_string)
-    })
-}
-
-fn schema() -> Value {
-    let mut command = Cli::command();
-    command.build();
-    let usage = command.render_usage().to_string();
-    let after_help = command
-        .get_after_help()
-        .map(|text| text.to_string())
-        .unwrap_or_default();
-    let examples = after_help
-        .lines()
-        .skip(1)
-        .map(str::trim)
-        .collect::<Vec<_>>();
-    let arguments = command
-        .get_arguments()
-        .map(argument_schema)
-        .collect::<Vec<_>>();
-
-    json!({
-        "schema_version": SCHEMA_VERSION,
-        "name": command.get_name(),
-        "version": command.get_version(),
-        "description": command.get_long_about().map(ToString::to_string),
-        "usage": usage,
-        "examples": examples,
-        "arguments": arguments
-    })
-}
-
-fn is_stdio(path: &Path) -> bool {
-    path.as_os_str() == STDIO_PATH
-}
-
-fn output_format(output: &Path, format: Option<CliFormat>) -> Result<ExportFormat, CliError> {
-    match format {
-        Some(CliFormat::Png) => return Ok(ExportFormat::Png),
-        Some(CliFormat::Jpeg) => return Ok(ExportFormat::Jpeg),
-        None if is_stdio(output) => {
-            return Err(CliError::new(
-                "unsupported_output_format",
-                "-o - requires --format png or --format jpeg",
-            ))
-        }
-        None => {}
-    }
-    match output.extension().and_then(|extension| extension.to_str()) {
-        Some(extension) if extension.eq_ignore_ascii_case("png") => Ok(ExportFormat::Png),
-        Some(extension)
-            if extension.eq_ignore_ascii_case("jpg") || extension.eq_ignore_ascii_case("jpeg") =>
-        {
-            Ok(ExportFormat::Jpeg)
-        }
-        _ => Err(CliError::new(
-            "unsupported_output_format",
-            "output filename must end in .png, .jpg, or .jpeg",
-        )),
     }
 }
 
-fn load_stdin() -> Result<LoadedImage, CliError> {
-    let mut bytes = Vec::new();
-    std::io::stdin()
-        .lock()
-        .read_to_end(&mut bytes)
-        .map_err(|error| CliError::new("input_error", format!("cannot read stdin: {error}")))?;
-    let image = load_image_from_bytes(&bytes)
-        .map_err(|error| CliError::new("input_error", format!("cannot load stdin: {error}")))?;
-    let metadata = ImageMetadata {
-        name: STDIO_PATH.into(),
-        width: image.width(),
-        height: image.height(),
-    };
-    Ok(LoadedImage { image, metadata })
+#[derive(Debug)]
+enum Success {
+    Help(String),
+    Version,
+    Schema(Value),
+    Spec(Value),
+    Rendered(io::ExportResult),
 }
 
-fn load_images(paths: &[PathBuf]) -> Result<Vec<LoadedImage>, CliError> {
-    paths
-        .iter()
-        .map(|path| {
-            if is_stdio(path) {
-                return load_stdin();
-            }
-            load_image_with_metadata(path).map_err(|error| {
-                CliError::new(
-                    "input_error",
-                    format!("cannot load {}: {error}", path.display()),
-                )
-            })
-        })
-        .collect()
+impl Success {
+    fn json(&self) -> Value {
+        let mut response = match self {
+            Self::Help(help) => json!({ "help": help }),
+            Self::Version => json!({ "version": env!("CARGO_PKG_VERSION") }),
+            Self::Schema(schema) => json!({ "schema": schema }),
+            Self::Spec(spec) => json!({ "spec": spec }),
+            Self::Rendered(result) => json!({
+                "output": result.output.to_string_lossy(),
+                "width": result.width,
+                "height": result.height,
+                "format": result.format
+            }),
+        };
+        response["schema_version"] = json!(SCHEMA_VERSION);
+        response["ok"] = json!(true);
+        response
+    }
+
+    fn human(&self) -> Option<String> {
+        match self {
+            Self::Help(help) => Some(help.clone()),
+            Self::Version => Some(format!("stitchr {}", env!("CARGO_PKG_VERSION"))),
+            Self::Schema(schema) => Some(schema.to_string()),
+            Self::Spec(spec) => Some(format!("{spec:#}")),
+            Self::Rendered(result) if is_stdio(&result.output) => None,
+            Self::Rendered(result) => Some(result.output.display().to_string()),
+        }
+    }
 }
 
 fn compose_loaded_images(
@@ -343,92 +246,35 @@ fn compose_loaded_images(
     CliComposer::compose(&metadata, params).map_err(CliError::from)
 }
 
-struct ExportResult {
-    output: PathBuf,
-    width: u32,
-    height: u32,
-    format: &'static str,
+fn spec_json(spec: &CompositionSpec) -> Result<Value, CliError> {
+    let mut value = serde_json::to_value(spec).map_err(|error| {
+        CliError::new("serialization_error", format!("cannot print spec: {error}"))
+    })?;
+    value["schema_version"] = json!(SCHEMA_VERSION);
+    Ok(value)
 }
 
-fn validate_stdin(images: &[PathBuf]) -> Result<(), CliError> {
-    if images.iter().filter(|path| is_stdio(path)).count() > 1 {
-        return Err(CliError::new(
-            "invalid_arguments",
-            "- (stdin) can be used as an input only once",
-        ));
+fn execute(cli: Cli) -> Result<Success, CliError> {
+    if cli.help_json {
+        return Ok(Success::Schema(schema::schema()));
     }
-    Ok(())
+    io::validate_stdin(&cli.images)?;
+    let loaded = io::load_images(&cli.images)?;
+    let spec = compose_loaded_images(&loaded, cli.compose_params())?;
+    if cli.print_spec {
+        return spec_json(&spec).map(Success::Spec);
+    }
+    io::validate_stdout(&cli.output, cli.format, cli.json)?;
+    let images = loaded
+        .into_iter()
+        .map(|loaded| loaded.image)
+        .collect::<Vec<_>>();
+    let composed = render_spec(&spec, &images)?;
+    io::export(cli.output, &composed, cli.format, cli.jpeg_quality).map(Success::Rendered)
 }
 
-fn validate_stdout(output: &Path, format: Option<CliFormat>, json: bool) -> Result<(), CliError> {
-    if !is_stdio(output) {
-        return Ok(());
-    }
-    if json {
-        return Err(CliError::new(
-            "invalid_arguments",
-            "-o - cannot be combined with --json because stdout carries the image",
-        ));
-    }
-    if format.is_none() {
-        return Err(CliError::new(
-            "invalid_arguments",
-            "-o - requires --format png or --format jpeg",
-        ));
-    }
-    Ok(())
-}
-
-fn write_output(
-    output: &Path,
-    composed: &DynamicImage,
-    format: ExportFormat,
-    jpeg_quality: u8,
-) -> Result<(), CliError> {
-    if !is_stdio(output) {
-        return export_image_with_quality(composed, output, format, jpeg_quality).map_err(
-            |error| {
-                CliError::new(
-                    "output_error",
-                    format!("cannot write {}: {error}", output.display()),
-                )
-            },
-        );
-    }
-    // Encode fully before writing so an encoder failure never leaves a truncated image on stdout.
-    let mut bytes = Vec::new();
-    write_image(composed, &mut bytes, format, jpeg_quality)
-        .map_err(|error| CliError::new("output_error", format!("cannot encode image: {error}")))?;
-    let mut stdout = std::io::stdout().lock();
-    stdout
-        .write_all(&bytes)
-        .and_then(|()| stdout.flush())
-        .map_err(|error| CliError::new("output_error", format!("cannot write stdout: {error}")))
-}
-
-fn run(
-    output: PathBuf,
-    composed: DynamicImage,
-    format: Option<CliFormat>,
-    jpeg_quality: u8,
-) -> Result<ExportResult, CliError> {
-    let format = output_format(&output, format)?;
-    write_output(&output, &composed, format, jpeg_quality)?;
-    Ok(ExportResult {
-        output,
-        width: composed.width(),
-        height: composed.height(),
-        format: match format {
-            ExportFormat::Png => "png",
-            ExportFormat::Jpeg => "jpeg",
-        },
-    })
-}
-
-fn main() -> ExitCode {
-    let args = std::env::args_os().collect::<Vec<_>>();
-    let json_output = args
-        .iter()
+fn json_requested(args: &[std::ffi::OsString]) -> bool {
+    args.iter()
         .skip(1)
         .take_while(|argument| *argument != "--")
         .any(|argument| {
@@ -436,150 +282,49 @@ fn main() -> ExitCode {
                 || argument
                     .to_str()
                     .is_some_and(|value| value.starts_with("--json="))
-        });
-    let cli = match Cli::try_parse_from(args) {
-        Ok(cli) => cli,
-        Err(error) => {
-            if !json_output {
-                error.exit();
-            }
-            match error.kind() {
-                clap::error::ErrorKind::DisplayHelp => {
-                    println!(
-                        "{}",
-                        json!({
-                            "schema_version": SCHEMA_VERSION, "ok": true, "help": error.to_string()
-                        })
-                    );
-                    return ExitCode::SUCCESS;
-                }
-                clap::error::ErrorKind::DisplayVersion => {
-                    println!(
-                        "{}",
-                        json!({
-                            "schema_version": SCHEMA_VERSION, "ok": true, "version": env!("CARGO_PKG_VERSION")
-                        })
-                    );
-                    return ExitCode::SUCCESS;
-                }
-                _ => {
-                    return CliError::new("invalid_arguments", error.to_string())
-                        .report(true, ExitCode::from(2))
-                }
-            }
-        }
-    };
-    if cli.help_json {
-        let schema = schema();
-        if cli.json {
-            println!(
-                "{}",
-                json!({
-                    "schema_version": SCHEMA_VERSION, "ok": true, "schema": schema
-                })
-            );
-        } else {
-            println!("{schema}");
-        }
-        return ExitCode::SUCCESS;
-    }
+        })
+}
 
-    if let Err(error) = validate_stdin(&cli.images) {
-        return error.report(cli.json, ExitCode::from(2));
-    }
-    let loaded = match load_images(&cli.images) {
-        Ok(images) => images,
-        Err(error) => {
-            return error.report(cli.json, ExitCode::FAILURE);
+fn parse(
+    args: Vec<std::ffi::OsString>,
+    json_output: bool,
+) -> Result<Cli, Result<Success, CliError>> {
+    Cli::try_parse_from(args).map_err(|error| {
+        if !json_output {
+            error.exit();
         }
-    };
-    let spec = match compose_loaded_images(
-        &loaded,
-        CliComposeParams {
-            layout: cli.layout,
-            columns: cli.columns,
-            spacing: cli.spacing,
-            alignment: cli.alignment,
-            background_color: cli.background_color,
-            positions: &cli.position,
-            divider: cli.divider,
-            labels: &cli.label,
-            border_width: cli.border_width,
-            border_color: cli.border_color,
-            label_size: cli.label_size,
-            background_gradient: &cli.background_gradient,
-            gradient_kind: cli.gradient_kind,
-            gradient_angle: cli.gradient_angle,
-        },
-    ) {
-        Ok(spec) => spec,
-        Err(error) => {
-            return error.report(cli.json, ExitCode::FAILURE);
+        match error.kind() {
+            clap::error::ErrorKind::DisplayHelp => Ok(Success::Help(error.to_string())),
+            clap::error::ErrorKind::DisplayVersion => Ok(Success::Version),
+            _ => Err(CliError::new("invalid_arguments", error.to_string())),
         }
-    };
-    if cli.print_spec {
-        return match serde_json::to_value(&spec) {
-            Ok(mut spec) => {
-                spec["schema_version"] = json!(SCHEMA_VERSION);
-                if cli.json {
-                    println!(
-                        "{}",
-                        json!({
-                            "schema_version": SCHEMA_VERSION, "ok": true, "spec": spec
-                        })
-                    );
-                } else {
-                    println!("{spec:#}");
-                }
-                ExitCode::SUCCESS
-            }
-            Err(error) => {
-                CliError::new("serialization_error", format!("cannot print spec: {error}"))
-                    .report(cli.json, ExitCode::FAILURE)
-            }
-        };
-    }
+    })
+}
 
-    if let Err(error) = validate_stdout(&cli.output, cli.format, cli.json) {
-        return error.report(cli.json, ExitCode::from(2));
-    }
-    let images = loaded
-        .into_iter()
-        .map(|loaded| loaded.image)
-        .collect::<Vec<_>>();
-    let composed = match render_spec(&spec, &images) {
-        Ok(image) => image,
-        Err(error) => {
-            return CliError::from(error).report(cli.json, ExitCode::FAILURE);
-        }
+fn main() -> ExitCode {
+    let args = std::env::args_os().collect::<Vec<_>>();
+    let json_output = json_requested(&args);
+    let outcome = match parse(args, json_output) {
+        Ok(cli) => execute(cli),
+        Err(outcome) => outcome,
     };
-    match run(cli.output, composed, cli.format, cli.jpeg_quality) {
-        Ok(result) => {
-            if cli.json {
-                println!(
-                    "{}",
-                    json!({
-                        "schema_version": SCHEMA_VERSION,
-                        "ok": true,
-                        "output": result.output.to_string_lossy(),
-                        "width": result.width,
-                        "height": result.height,
-                        "format": result.format
-                    })
-                );
-            } else if !is_stdio(&result.output) {
-                println!("{}", result.output.display());
+    match outcome {
+        Ok(success) => {
+            if json_output {
+                println!("{}", success.json());
+            } else if let Some(text) = success.human() {
+                println!("{text}");
             }
             ExitCode::SUCCESS
         }
-        Err(error) => error.report(cli.json, ExitCode::FAILURE),
+        Err(error) => error.report(json_output),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use stitchr_core::{export_image, DynamicImage};
+    use stitchr_core::{export_image, DynamicImage, ExportFormat};
 
     #[test]
     fn parses_documented_flags_and_requires_inputs() {
@@ -631,7 +376,7 @@ mod tests {
                 .help_json
         );
 
-        let value: Value = serde_json::from_str(&schema().to_string()).unwrap();
+        let value: Value = serde_json::from_str(&schema::schema().to_string()).unwrap();
         let args = value["arguments"].as_array().unwrap();
         let by_name = |name| args.iter().find(|arg| arg["name"] == name).unwrap();
 
@@ -839,7 +584,7 @@ mod tests {
 
     #[test]
     fn schema_marks_background_gradient_as_not_repeatable() {
-        let value = schema();
+        let value = schema::schema();
         let gradient = value["arguments"]
             .as_array()
             .unwrap()
@@ -852,6 +597,17 @@ mod tests {
             gradient["values_per_occurrence"],
             json!({"min": 2, "max": 2})
         );
+    }
+
+    fn render(cli: Cli) -> io::ExportResult {
+        let loaded = io::load_images(&cli.images).unwrap();
+        let spec = compose_loaded_images(&loaded, cli.compose_params()).unwrap();
+        let pixels = loaded
+            .iter()
+            .map(|image| image.image.clone())
+            .collect::<Vec<_>>();
+        let composed = render_spec(&spec, &pixels).unwrap();
+        io::export(cli.output, &composed, cli.format, cli.jpeg_quality).unwrap()
     }
 
     #[test]
@@ -881,43 +637,7 @@ mod tests {
             png.to_str().unwrap(),
         ])
         .unwrap();
-        let loaded = load_images(&freeform.images).unwrap();
-        let spec = compose_loaded_images(
-            &loaded,
-            CliComposeParams {
-                layout: freeform.layout,
-                columns: freeform.columns,
-                spacing: freeform.spacing,
-                alignment: freeform.alignment,
-                background_color: freeform.background_color,
-                positions: &freeform.position,
-                divider: freeform.divider,
-                labels: &freeform.label,
-                border_width: freeform.border_width,
-                border_color: freeform.border_color,
-                label_size: freeform.label_size,
-                background_gradient: &freeform.background_gradient,
-                gradient_kind: freeform.gradient_kind,
-                gradient_angle: freeform.gradient_angle,
-            },
-        )
-        .unwrap();
-        let pixels = loaded
-            .iter()
-            .map(|image| image.image.clone())
-            .collect::<Vec<_>>();
-        let composed = render_spec(&spec, &pixels).unwrap();
-        assert_eq!(
-            run(
-                freeform.output.clone(),
-                composed,
-                freeform.format,
-                freeform.jpeg_quality
-            )
-            .unwrap()
-            .output,
-            png
-        );
+        assert_eq!(render(freeform).output, png);
         let result = stitchr_core::load_image(&png).unwrap();
         assert_eq!((result.width(), result.height()), (4, 3));
 
@@ -933,47 +653,109 @@ mod tests {
             jpeg.to_str().unwrap(),
         ])
         .unwrap();
-        let loaded = load_images(&vertical.images).unwrap();
-        let spec = compose_loaded_images(
-            &loaded,
-            CliComposeParams {
-                layout: vertical.layout,
-                columns: vertical.columns,
-                spacing: vertical.spacing,
-                alignment: vertical.alignment,
-                background_color: vertical.background_color,
-                positions: &vertical.position,
-                divider: vertical.divider,
-                labels: &vertical.label,
-                border_width: vertical.border_width,
-                border_color: vertical.border_color,
-                label_size: vertical.label_size,
-                background_gradient: &vertical.background_gradient,
-                gradient_kind: vertical.gradient_kind,
-                gradient_angle: vertical.gradient_angle,
-            },
-        )
-        .unwrap();
-        let pixels = loaded
-            .iter()
-            .map(|image| image.image.clone())
-            .collect::<Vec<_>>();
-        let composed = render_spec(&spec, &pixels).unwrap();
-        assert_eq!(
-            run(
-                vertical.output.clone(),
-                composed,
-                vertical.format,
-                vertical.jpeg_quality
-            )
-            .unwrap()
-            .output,
-            jpeg
-        );
+        assert_eq!(render(vertical).output, jpeg);
         let result = stitchr_core::load_image(&jpeg).unwrap();
         assert_eq!((result.width(), result.height()), (6, 8));
         assert!(std::fs::read(&jpeg)
             .unwrap()
             .starts_with(&[0xff, 0xd8, 0xff]));
+    }
+
+    #[test]
+    fn json_is_requested_only_by_a_bare_flag_before_the_separator() {
+        let args = |values: &[&str]| {
+            std::iter::once("stitchr")
+                .chain(values.iter().copied())
+                .map(std::ffi::OsString::from)
+                .collect::<Vec<_>>()
+        };
+
+        assert!(json_requested(&args(&["a.png", "--json"])));
+        assert!(json_requested(&args(&["--json=true", "a.png"])));
+        assert!(!json_requested(&args(&["a.png"])));
+        assert!(!json_requested(&args(&["--", "--json"])));
+        assert!(!json_requested(&args(&["a.png", "--output=--json"])));
+    }
+
+    #[test]
+    fn rendered_success_json_has_the_render_fields() {
+        let success = Success::Rendered(io::ExportResult {
+            output: PathBuf::from("out.png"),
+            width: 3,
+            height: 4,
+            format: "png",
+        });
+
+        assert_eq!(
+            success.json(),
+            json!({
+                "schema_version": SCHEMA_VERSION, "ok": true, "output": "out.png",
+                "width": 3, "height": 4, "format": "png"
+            })
+        );
+        assert_eq!(success.human().as_deref(), Some("out.png"));
+    }
+
+    #[test]
+    fn stdout_render_prints_nothing_in_human_mode() {
+        let success = Success::Rendered(io::ExportResult {
+            output: PathBuf::from("-"),
+            width: 1,
+            height: 1,
+            format: "png",
+        });
+
+        assert_eq!(success.human(), None);
+    }
+
+    #[test]
+    fn query_successes_wrap_their_payload_under_one_key() {
+        let payload = json!({ "a": 1 });
+
+        assert_eq!(
+            Success::Spec(payload.clone()).json(),
+            json!({ "schema_version": SCHEMA_VERSION, "ok": true, "spec": payload })
+        );
+        assert_eq!(
+            Success::Schema(payload.clone()).json(),
+            json!({ "schema_version": SCHEMA_VERSION, "ok": true, "schema": payload })
+        );
+        assert_eq!(
+            Success::Help("usage".into()).json(),
+            json!({ "schema_version": SCHEMA_VERSION, "ok": true, "help": "usage" })
+        );
+        assert_eq!(
+            Success::Version.json(),
+            json!({
+                "schema_version": SCHEMA_VERSION, "ok": true,
+                "version": env!("CARGO_PKG_VERSION")
+            })
+        );
+    }
+
+    #[test]
+    fn spec_query_human_output_is_pretty_printed() {
+        let text = Success::Spec(json!({ "a": 1 })).human().unwrap();
+
+        assert_eq!(text, "{\n  \"a\": 1\n}");
+    }
+
+    #[test]
+    fn spec_json_stamps_the_contract_version() {
+        let cli = Cli::try_parse_from(["stitchr", "a.png"]).unwrap();
+        let spec = CliComposer::compose(
+            &[stitchr_core::ImageMetadata {
+                name: "a.png".into(),
+                width: 2,
+                height: 1,
+            }],
+            cli.compose_params(),
+        )
+        .unwrap();
+
+        let value = spec_json(&spec).unwrap();
+
+        assert_eq!(value["schema_version"], SCHEMA_VERSION);
+        assert_eq!(value["width"], 2);
     }
 }

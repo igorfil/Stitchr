@@ -1,11 +1,13 @@
 pub mod color;
 pub mod ffi;
+mod frame;
 mod layout;
 pub mod spec;
 
 uniffi::setup_scaffolding!();
 
 pub use color::{ColorParseError, RgbColor};
+pub use frame::SpecFrame;
 pub use image::DynamicImage;
 pub use layout::{Alignment, ComposeError, ComposeOptions, Layout, StackDirection};
 pub use spec::{
@@ -13,7 +15,9 @@ pub use spec::{
     SpecLayout, SpecPosition,
 };
 
-use image::{imageops, ImageDecoder, ImageFormat, ImageReader, Limits, Pixel, Rgba, RgbaImage};
+use image::{
+    imageops, GenericImage, ImageDecoder, ImageFormat, ImageReader, Limits, Pixel, Rgba, RgbaImage,
+};
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,6 +135,14 @@ pub fn render_plan(
     images: &[DynamicImage],
     plan: &PlacementPlan,
 ) -> Result<DynamicImage, ComposeError> {
+    render_plan_with(images, plan, |_, _| Ok(()))
+}
+
+fn render_plan_with(
+    images: &[DynamicImage],
+    plan: &PlacementPlan,
+    mut decorate: impl FnMut(&mut RgbaImage, usize) -> Result<(), ComposeError>,
+) -> Result<DynamicImage, ComposeError> {
     if plan.positions.len() != images.len() {
         return Err(ComposeError::ImageCountMismatch {
             expected: plan.positions.len(),
@@ -138,7 +150,8 @@ pub fn render_plan(
         });
     }
     let mut canvas = new_canvas(plan.width, plan.height, plan.background_color)?;
-    for (image, &(x, y)) in images.iter().zip(&plan.positions) {
+    for (index, (image, &(x, y))) in images.iter().zip(&plan.positions).enumerate() {
+        decorate(&mut canvas, index)?;
         imageops::overlay(&mut canvas, image, i64::from(x), i64::from(y));
     }
     // `imageops::overlay` can round an opaque destination's alpha down to 254.
@@ -146,6 +159,33 @@ pub fn render_plan(
         pixel.0[3] = 255;
     }
 
+    Ok(DynamicImage::ImageRgba8(canvas))
+}
+
+fn render_framed_split(
+    images: &[DynamicImage],
+    spec: &CompositionSpec,
+    frame: &SpecFrame,
+    divider: u32,
+) -> Result<DynamicImage, ComposeError> {
+    let (left, top) = frame::inset(frame);
+    let size = (
+        spec.width.saturating_sub(left.saturating_mul(2)),
+        spec.height.saturating_sub(top.saturating_add(left)),
+    );
+    let split = render_split(images, size, divider, spec.background_color)?;
+    let mut canvas = new_canvas(spec.width, spec.height, spec.background_color)?;
+    canvas
+        .copy_from(&split.to_rgba8(), left, top)
+        .map_err(|_| ComposeError::SizeOverflow)?;
+    let band_starts = (0..images.len())
+        .map(|band| {
+            (0..size.0)
+                .find(|&x| layout::split_region((x, 0), size, images.len(), divider) == Some(band))
+                .unwrap_or(0)
+        })
+        .collect::<Vec<_>>();
+    frame::draw_split(&mut canvas, frame, &band_starts);
     Ok(DynamicImage::ImageRgba8(canvas))
 }
 
@@ -160,12 +200,15 @@ pub fn render_spec(
         });
     }
     if let SpecLayout::Split { divider } = spec.layout {
-        return render_split(
-            images,
-            (spec.width, spec.height),
-            divider,
-            spec.background_color,
-        );
+        return match &spec.frame {
+            Some(frame) => render_framed_split(images, spec, frame, divider),
+            None => render_split(
+                images,
+                (spec.width, spec.height),
+                divider,
+                spec.background_color,
+            ),
+        };
     }
     let plan = PlacementPlan {
         positions: spec
@@ -177,7 +220,18 @@ pub fn render_spec(
         height: spec.height,
         background_color: spec.background_color,
     };
-    render_plan(images, &plan)
+    match &spec.frame {
+        None => render_plan(images, &plan),
+        Some(frame) => render_plan_with(images, &plan, |canvas, index| {
+            frame::draw_tile(
+                canvas,
+                frame,
+                frame.labels.get(index).map_or("", String::as_str),
+                plan.positions[index],
+                (images[index].width(), images[index].height()),
+            )
+        }),
+    }
 }
 
 pub fn export_image(
@@ -281,6 +335,7 @@ mod tests {
             &CompositionParams {
                 layout,
                 background_color,
+                frame: None,
             },
         )
         .unwrap()
@@ -602,6 +657,7 @@ mod tests {
                     alignment: Alignment::Start,
                 },
                 background_color: RgbColor::default(),
+                frame: None,
             },
         )
         .unwrap();
@@ -845,6 +901,7 @@ mod tests {
                         alignment: Alignment::Start,
                     },
                     background_color: RgbColor::default(),
+                    frame: None,
                 }
             )
             .err(),
@@ -1522,6 +1579,7 @@ mod tests {
                     alignment: Alignment::Start,
                 },
                 background_color: RgbColor::default(),
+                frame: None,
             },
         )
         .unwrap();
@@ -1588,6 +1646,7 @@ mod tests {
                                 .collect(),
                         },
                         background_color: RgbColor::default(),
+                        frame: None,
                     }
                 )
                 .err(),
@@ -1661,6 +1720,7 @@ mod tests {
                         alignment: Alignment::Start,
                     },
                     background_color: RgbColor::default(),
+                    frame: None,
                 }
             )
             .err(),
@@ -1676,6 +1736,7 @@ mod tests {
                         alignment: Alignment::Start,
                     },
                     background_color: RgbColor::default(),
+                    frame: None,
                 }
             )
             .err(),
@@ -2425,6 +2486,7 @@ mod tests {
                 &CompositionParams {
                     layout: SpecLayout::Split { divider: 0 },
                     background_color: RgbColor::default(),
+                    frame: None,
                 },
             )
             .err(),
@@ -2499,5 +2561,144 @@ mod tests {
 
         assert_eq!(loaded.dimensions(), (1, 1));
         assert_eq!(loaded.get_pixel(0, 0).0, [255, 255, 255, 255]);
+    }
+
+    fn frame(labels: &[&str], border_width: u32, border_color: [u8; 4]) -> SpecFrame {
+        SpecFrame {
+            labels: labels.iter().map(|label| label.to_string()).collect(),
+            border_width,
+            border_color: RgbColor {
+                red: border_color[0],
+                green: border_color[1],
+                blue: border_color[2],
+            },
+            label_size: 12,
+        }
+    }
+
+    fn framed_spec(
+        images: &[DynamicImage],
+        layout: SpecLayout,
+        frame: SpecFrame,
+    ) -> CompositionSpec {
+        let metadata = images
+            .iter()
+            .enumerate()
+            .map(|(index, image)| ImageMetadata {
+                name: format!("{index}.png"),
+                width: image.width(),
+                height: image.height(),
+            })
+            .collect::<Vec<_>>();
+        compose_spec(
+            &metadata,
+            &CompositionParams {
+                layout,
+                background_color: RgbColor::default(),
+                frame: Some(frame),
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn empty_labels_draw_only_a_border_around_each_image() {
+        let images = [solid(2, 2, RED), solid(2, 2, BLUE)];
+        let spec = framed_spec(
+            &images,
+            SpecLayout::Stack {
+                direction: StackDirection::Horizontal,
+                spacing: 0,
+                alignment: Alignment::Start,
+            },
+            frame(&["", ""], 1, GREEN),
+        );
+
+        let result = render_spec(&spec, &images).unwrap();
+
+        assert_canvas(&result, 8, 4, |x, y| match (x % 4, y) {
+            (1 | 2, 1 | 2) if x < 4 => RED,
+            (1 | 2, 1 | 2) => BLUE,
+            _ => GREEN,
+        });
+    }
+
+    #[test]
+    fn labels_add_a_header_tab_above_each_image_without_covering_it() {
+        let images = [solid(40, 10, RED), solid(40, 10, BLUE)];
+        let spec = framed_spec(
+            &images,
+            SpecLayout::Grid {
+                columns: 2,
+                spacing: 0,
+                alignment: Alignment::Start,
+            },
+            frame(&["A", ""], 2, GREEN),
+        );
+        let first = &spec.images[0].position;
+        let second = &spec.images[1].position;
+
+        assert_eq!((first.x, second.y), (2, first.y));
+        assert!(first.y > 2);
+        assert_eq!(spec.height, 10 + first.y + 2);
+        let result = render_spec(&spec, &images).unwrap();
+        assert_eq!(count_color(&result, RED), 400);
+        assert_eq!(count_color(&result, BLUE), 400);
+        assert_eq!(result.get_pixel(3, first.y - 1).0, GREEN);
+        assert_eq!(result.get_pixel(second.x + 3, second.y - 1).0, BLACK);
+    }
+
+    #[test]
+    fn labels_wider_than_their_image_widen_its_tile() {
+        let images = [solid(1, 1, RED)];
+        let spec = framed_spec(
+            &images,
+            SpecLayout::Freeform {
+                positions: vec![SpecPosition { x: 0, y: 0 }],
+            },
+            frame(&["A much longer label"], 1, GREEN),
+        );
+
+        assert!(spec.width > 3);
+        assert_eq!(count_color(&render_spec(&spec, &images).unwrap(), RED), 1);
+    }
+
+    #[test]
+    fn framed_split_keeps_every_input_pixel_inside_one_border() {
+        let images = [solid(30, 10, RED), solid(30, 10, BLUE)];
+        let spec = framed_spec(
+            &images,
+            SpecLayout::Split { divider: 0 },
+            frame(&["", ""], 3, GREEN),
+        );
+
+        assert_eq!((spec.width, spec.height), (36, 16));
+        let result = render_spec(&spec, &images).unwrap();
+        assert_eq!(count_color(&result, RED) + count_color(&result, BLUE), 300);
+        assert_eq!(count_color(&result, GREEN), 36 * 16 - 300);
+    }
+
+    #[test]
+    fn rejects_label_count_that_differs_from_image_count() {
+        let metadata = [ImageMetadata {
+            name: "one.png".into(),
+            width: 1,
+            height: 1,
+        }];
+
+        assert_eq!(
+            compose_spec(
+                &metadata,
+                &CompositionParams {
+                    layout: SpecLayout::Split { divider: 0 },
+                    background_color: RgbColor::default(),
+                    frame: Some(frame(&["A", "B"], 1, GREEN)),
+                },
+            ),
+            Err(ComposeError::LabelCountMismatch {
+                expected: 1,
+                actual: 2
+            })
+        );
     }
 }

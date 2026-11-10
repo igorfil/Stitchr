@@ -43,6 +43,7 @@ impl From<ComposeError> for CliError {
             ComposeError::ImageCountMismatch { .. } => "image_count_mismatch",
             ComposeError::FreeformPositionCount { .. } => "freeform_position_count",
             ComposeError::SplitSizeMismatch => "split_size_mismatch",
+            ComposeError::LabelCountMismatch { .. } => "label_count_mismatch",
             ComposeError::SizeOverflow => "canvas_too_large",
         };
         Self::new(code, error.to_string())

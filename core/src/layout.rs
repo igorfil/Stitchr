@@ -58,6 +58,7 @@ pub enum ComposeError {
     ImageCountMismatch { expected: usize, actual: usize },
     FreeformPositionCount { expected: usize, actual: usize },
     SplitSizeMismatch,
+    LabelCountMismatch { expected: usize, actual: usize },
     SizeOverflow,
 }
 
@@ -78,6 +79,9 @@ impl fmt::Display for ComposeError {
                     f,
                     "split layout requires all images to have the same dimensions"
                 )
+            }
+            Self::LabelCountMismatch { expected, actual } => {
+                write!(f, "expected {expected} labels, got {actual}")
             }
             Self::SizeOverflow => write!(f, "composition dimensions exceed the supported size"),
         }

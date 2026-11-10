@@ -1,7 +1,7 @@
 use crate::{CliAlignment, CliLayout};
 use stitchr_core::{
     compose_spec, Alignment, ComposeError, CompositionParams, CompositionSpec, ImageMetadata,
-    RgbColor, SpecLayout, SpecPosition, StackDirection,
+    RgbColor, SpecFrame, SpecLayout, SpecPosition, StackDirection,
 };
 
 pub(crate) struct CliComposer;
@@ -14,6 +14,10 @@ pub(crate) struct CliComposeParams<'a> {
     pub background_color: RgbColor,
     pub positions: &'a [u32],
     pub divider: u32,
+    pub labels: &'a [String],
+    pub border_width: u32,
+    pub border_color: RgbColor,
+    pub label_size: u32,
 }
 
 impl CliComposer {
@@ -55,11 +59,18 @@ impl CliComposer {
                 divider: cli_params.divider,
             },
         };
+        let frame = (!cli_params.labels.is_empty()).then(|| SpecFrame {
+            labels: cli_params.labels.to_vec(),
+            border_width: cli_params.border_width,
+            border_color: cli_params.border_color,
+            label_size: cli_params.label_size,
+        });
         compose_spec(
             images,
             &CompositionParams {
                 layout,
                 background_color: cli_params.background_color,
+                frame,
             },
         )
     }
@@ -81,6 +92,10 @@ mod tests {
             background_color: cli.background_color,
             positions: &cli.position,
             divider: cli.divider,
+            labels: &cli.label,
+            border_width: cli.border_width,
+            border_color: cli.border_color,
+            label_size: cli.label_size,
         }
     }
 
@@ -127,6 +142,7 @@ mod tests {
                 width: 3,
                 height: 2,
                 background_color: RgbColor::default(),
+                frame: None,
             }
         );
         assert_eq!(explicit_zero, default);
@@ -169,6 +185,7 @@ mod tests {
                 width: 36,
                 height: 22,
                 background_color: RgbColor::default(),
+                frame: None,
             }
         );
     }

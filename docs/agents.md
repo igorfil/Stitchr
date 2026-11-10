@@ -121,6 +121,7 @@ Branch on `error.code`, not `error.message`. Messages may include paths and oper
 | `output_error` | Check the destination directory, permissions, available space, and whether the destination is a directory. |
 | `freeform_position_count` | Supply exactly one `--position X Y` pair per input image. |
 | `split_size_mismatch` | Use identically sized inputs, or choose a grid/stack layout. Stitchr does not resize inputs for split mode. |
+| `label_count_mismatch` | Supply exactly one `--label` per input image, or none. Use `--label ""` for a border without a label. |
 | `canvas_too_large` | Reduce spacing, coordinates, or input dimensions/count. The renderer also uses this code when canvas memory cannot be reserved. |
 | `no_images` | The composition engine received no images. Supply at least one input. |
 | `invalid_image_dimensions` | An input has a zero dimension. Replace it with a valid image. |

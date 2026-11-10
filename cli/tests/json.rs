@@ -108,6 +108,10 @@ fn processing_failures_have_stable_codes_and_no_output_file() {
             ],
             "freeform_position_count",
         ),
+        (
+            vec!["first.png", "second.png", "--label", "Only one"],
+            "label_count_mismatch",
+        ),
         (vec!["first.png", "--spacing", "10000"], "canvas_too_large"),
         (
             vec!["first.png", "--spacing", "4294967295"],

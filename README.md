@@ -64,6 +64,15 @@ stitchr docs/examples/light.png docs/examples/dark.png \
 
 Split inputs must have identical dimensions. The output keeps those dimensions and shows a diagonal slice of each input, in argument order. `--divider` sets the width of the background-colored line between slices.
 
+### Borders and labels
+
+```sh
+stitchr before.png after.png --layout horizontal --spacing 16 --background white \
+  --label Before --label After -o labeled.png
+```
+
+Pass one `--label` per input, in order, to draw a border around each image with a header tab holding its label in the top-left corner. Use `--label ""` for a border without a tab. The frame is added around the image, so no image pixels are covered. `--border-width` (default 2), `--border-color` (default gray), and `--label-size` (font size in pixels, default 20) adjust the frame. Grid, stack, and freeform layouts frame each image; freeform positions place the frame's top-left corner. Split layouts get one border around the whole canvas, with each slice's tab placed where that slice starts on the top edge.
+
 ### Inspect a composition
 
 ```sh

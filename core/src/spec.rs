@@ -1,4 +1,7 @@
-use crate::{layout, Alignment, ComposeError, ComposeOptions, Layout, RgbColor, StackDirection};
+use crate::{
+    frame, layout, Alignment, ComposeError, ComposeOptions, Layout, RgbColor, SpecFrame,
+    StackDirection,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,6 +48,7 @@ pub struct ImagePlacement {
 pub struct CompositionParams {
     pub layout: SpecLayout,
     pub background_color: RgbColor,
+    pub frame: Option<SpecFrame>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,6 +58,8 @@ pub struct CompositionSpec {
     pub width: u32,
     pub height: u32,
     pub background_color: RgbColor,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame: Option<SpecFrame>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,10 +74,27 @@ pub fn compose_spec(
     images: &[ImageMetadata],
     params: &CompositionParams,
 ) -> Result<CompositionSpec, ComposeError> {
+    if let Some(frame) = &params.frame {
+        if frame.labels.len() != images.len() {
+            return Err(ComposeError::LabelCountMismatch {
+                expected: images.len(),
+                actual: frame.labels.len(),
+            });
+        }
+    }
+    let split = matches!(params.layout, SpecLayout::Split { .. });
     let dimensions = images
         .iter()
         .map(|image| (image.width, image.height))
         .collect::<Vec<_>>();
+    let tiles = match &params.frame {
+        Some(frame) if !split => dimensions
+            .iter()
+            .zip(&frame.labels)
+            .map(|(&size, label)| frame::tile_size(frame, label, size))
+            .collect::<Result<Vec<_>, _>>()?,
+        _ => dimensions,
+    };
     let (layout, spacing, alignment) = match &params.layout {
         SpecLayout::Grid {
             columns,
@@ -105,27 +128,36 @@ pub fn compose_spec(
         SpecLayout::Split { divider } => (Layout::Split { divider: *divider }, 0, Alignment::Start),
     };
     let plan = layout::plan(
-        &dimensions,
+        &tiles,
         &ComposeOptions {
             layout,
             spacing,
             alignment,
         },
     )?;
+    let (left, top) = params.frame.as_ref().map_or((0, 0), frame::inset);
+    let (width, height) = match &params.frame {
+        Some(frame) if split => frame::tile_size(frame, "", (plan.width, plan.height))?,
+        _ => (plan.width, plan.height),
+    };
     let images = images
         .iter()
         .zip(plan.positions)
         .map(|(image, (x, y))| ImagePlacement {
             name: image.name.clone(),
-            position: SpecPosition { x, y },
+            position: SpecPosition {
+                x: x + left,
+                y: y + top,
+            },
         })
         .collect();
     Ok(CompositionSpec {
         images,
         layout: params.layout.clone(),
-        width: plan.width,
-        height: plan.height,
+        width,
+        height,
         background_color: params.background_color,
+        frame: params.frame.clone(),
     })
 }
 
@@ -156,6 +188,7 @@ mod tests {
                 alignment: Alignment::End,
             },
             background_color: RgbColor::default(),
+            frame: None,
         };
 
         let spec = compose_spec(&images, &params).unwrap();
@@ -182,6 +215,7 @@ mod tests {
                     alignment: Alignment::End,
                 },
                 background_color: RgbColor::default(),
+                frame: None,
             },
         )
         .unwrap();
@@ -215,6 +249,7 @@ mod tests {
             &CompositionParams {
                 layout: SpecLayout::Split { divider: 2 },
                 background_color: RgbColor::default(),
+                frame: None,
             },
         )
         .unwrap();
@@ -243,6 +278,7 @@ mod tests {
                         positions: vec![SpecPosition { x: 0, y: 0 }],
                     },
                     background_color: RgbColor::default(),
+                    frame: None,
                 }
             ),
             Err(ComposeError::FreeformPositionCount {
@@ -264,6 +300,7 @@ mod tests {
                     alignment: Alignment::Center,
                 },
                 background_color: RgbColor::default(),
+                frame: None,
             },
         )
         .unwrap();
@@ -285,6 +322,7 @@ mod tests {
                     positions: vec![SpecPosition { x: 1, y: 2 }, SpecPosition { x: 3, y: 0 }],
                 },
                 background_color: RgbColor::default(),
+                frame: None,
             },
         )
         .unwrap();

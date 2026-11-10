@@ -35,7 +35,7 @@ enum CliAlignment {
     version,
     about = "Combine PNG and JPEG images into one image",
     long_about = "Arrange PNG/JPEG images in a grid, horizontal or vertical stack, at explicit freeform positions, or as diagonal split slices of same-size images. Output format is selected by the output file extension.",
-    after_help = "Examples:\n  stitchr img1.png img2.png --layout grid --spacing 10\n  stitchr img1.png img2.jpg --layout horizontal --alignment center -o combined.jpg\n  stitchr img1.png img2.png --layout freeform --position 0 0 --position 300 80 -o combined.png\n  stitchr light.png dark.png --layout split --divider 4 --background white -o split.png\n  stitchr img1.png img2.png --background rebeccapurple --print-spec"
+    after_help = "Examples:\n  stitchr img1.png img2.png --layout grid --spacing 10\n  stitchr img1.png img2.jpg --layout horizontal --alignment center -o combined.jpg\n  stitchr img1.png img2.png --layout freeform --position 0 0 --position 300 80 -o combined.png\n  stitchr light.png dark.png --layout split --divider 4 --background white -o split.png\n  stitchr before.png after.png --layout horizontal --spacing 16 --background white --label Before --label After -o labeled.png\n  stitchr img1.png img2.png --background rebeccapurple --print-spec"
 )]
 struct Cli {
     #[arg(required_unless_present = "help_json", num_args = 1.., value_name = "IMAGE", help = "Input PNG/JPEG paths (one or more; required unless --help-json/--schema)")]
@@ -82,6 +82,22 @@ struct Cli {
     )]
     divider: u32,
 
+    #[arg(long, action = ArgAction::Append, value_name = "TEXT", help = "Header label for each image, in input order (repeat once per image); adds a border around each image. Use \"\" for a border without a label")]
+    label: Vec<String>,
+
+    #[arg(
+        long,
+        default_value_t = 2,
+        value_name = "PIXELS",
+        help = "Border width around labeled images (nonnegative integer; only with --label)"
+    )]
+    border_width: u32,
+
+    #[arg(long, default_value_t = RgbColor { red: 128, green: 128, blue: 128 }, value_name = "COLOR", help = "Border and label tab color: RGB #RRGGBB, rgb(r,g,b), or common color name (only with --label)")]
+    border_color: RgbColor,
+
+    #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u32).range(1..), value_name = "PIXELS", help = "Label font size (positive integer; only with --label)")]
+    label_size: u32,
     #[arg(
         long,
         short,
@@ -113,10 +129,11 @@ fn argument_schema(arg: &Arg) -> Value {
         ArgAction::SetTrue | ArgAction::Help | ArgAction::Version
     );
     let path = arg.get_value_hint() == ValueHint::AnyPath;
-    let color = arg.get_id().as_str() == "background_color";
+    let color = matches!(arg.get_id().as_str(), "background_color" | "border_color");
+    let text = arg.get_id().as_str() == "label";
     let value_type = if boolean {
         "boolean"
-    } else if path || color || !choices.is_empty() {
+    } else if path || color || text || !choices.is_empty() {
         "string"
     } else {
         "integer"
@@ -327,6 +344,10 @@ fn main() -> ExitCode {
             background_color: cli.background_color,
             positions: &cli.position,
             divider: cli.divider,
+            labels: &cli.label,
+            border_width: cli.border_width,
+            border_color: cli.border_color,
+            label_size: cli.label_size,
         },
     ) {
         Ok(spec) => spec,
@@ -464,6 +485,10 @@ mod tests {
         assert_eq!(by_name("background_color")["type"], "string");
         assert_eq!(by_name("background_color")["format"], "color");
         assert_eq!(by_name("background_color")["default"], "#000000");
+        assert_eq!(by_name("label")["type"], "string");
+        assert_eq!(by_name("label")["repeatable"], true);
+        assert_eq!(by_name("border_color")["format"], "color");
+        assert_eq!(by_name("border_width")["type"], "integer");
         assert!(args.iter().all(|arg| arg["name"] != "max_size"));
         assert_eq!(by_name("position")["repeatable"], true);
         assert_eq!(by_name("position")["values_per_occurrence"]["min"], 2);
@@ -517,6 +542,10 @@ mod tests {
                 background_color: freeform.background_color,
                 positions: &freeform.position,
                 divider: freeform.divider,
+                labels: &freeform.label,
+                border_width: freeform.border_width,
+                border_color: freeform.border_color,
+                label_size: freeform.label_size,
             },
         )
         .unwrap();
@@ -552,6 +581,10 @@ mod tests {
                 background_color: vertical.background_color,
                 positions: &vertical.position,
                 divider: vertical.divider,
+                labels: &vertical.label,
+                border_width: vertical.border_width,
+                border_color: vertical.border_color,
+                label_size: vertical.label_size,
             },
         )
         .unwrap();

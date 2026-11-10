@@ -80,6 +80,13 @@ pub enum ComposeError {
     },
     /// A canvas dimension does not fit in a `u32`.
     SizeOverflow,
+    /// Spacing, borders, and labels alone exceed the requested maximum size.
+    CannotFit {
+        width: u32,
+        height: u32,
+        max_width: Option<u32>,
+        max_height: Option<u32>,
+    },
     /// The canvas buffer would exceed the allocation limit.
     CanvasTooLarge {
         width: u32,
@@ -129,6 +136,20 @@ impl fmt::Display for ComposeError {
                 "composition dimensions exceed the supported size: a side would be larger than {} px",
                 u32::MAX
             ),
+            Self::CannotFit {
+                width,
+                height,
+                max_width,
+                max_height,
+            } => {
+                let limit = |bound: &Option<u32>| bound.map_or("any".to_owned(), |b| b.to_string());
+                write!(
+                    f,
+                    "the composition cannot fit in {}x{}: even with images shrunk to one pixel it is {width}x{height}",
+                    limit(max_width),
+                    limit(max_height)
+                )
+            }
             Self::CanvasTooLarge {
                 width,
                 height,

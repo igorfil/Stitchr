@@ -183,6 +183,7 @@ Many errors also carry an `error.details` object with machine-readable context. 
 | `split_size_mismatch` | Use identically sized inputs, or choose a grid/stack layout. Stitchr does not resize inputs for split mode. |
 | `label_count_mismatch` | Supply exactly one `--label` per input image, or none. Use `--label ""` for a border without a label. |
 | `canvas_too_large` | Reduce spacing, coordinates, or input dimensions/count. The renderer also uses this code when canvas memory cannot be reserved. |
+| `canvas_cannot_fit` | `--max-width`/`--max-height` is smaller than the space taken by spacing, borders, and labels, even with images shrunk to one pixel. Raise the limit or reduce spacing. |
 | `no_images` | The composition engine received no images. Supply at least one input. |
 | `invalid_image_dimensions` | An input has a zero dimension. Replace it with a valid image. |
 | `invalid_columns` | The engine requires positive grid columns. CLI argument validation normally reports this as `invalid_arguments`. |

@@ -16,6 +16,7 @@ pub(crate) const ERROR_CODES: &[(&str, &str)] = &[
     ("split_size_mismatch", "Split inputs must have identical dimensions."),
     ("label_count_mismatch", "Supply exactly one --label per input image, or none."),
     ("canvas_too_large", "The composition exceeds the supported size or memory limit."),
+    ("canvas_cannot_fit", "Spacing, borders, and labels alone exceed --max-width/--max-height. Raise the limits or reduce spacing."),
     ("no_images", "The composition engine received no images."),
     ("invalid_image_dimensions", "An input has a zero dimension."),
     ("invalid_columns", "Grid columns must be positive."),
@@ -227,6 +228,20 @@ impl From<ComposeError> for CliError {
             ComposeError::SizeOverflow => (
                 "canvas_too_large",
                 Some(json!({ "max_dimension": u32::MAX })),
+            ),
+            ComposeError::CannotFit {
+                width,
+                height,
+                max_width,
+                max_height,
+            } => (
+                "canvas_cannot_fit",
+                Some(json!({
+                    "width": width,
+                    "height": height,
+                    "max_width": max_width,
+                    "max_height": max_height
+                })),
             ),
             ComposeError::CanvasTooLarge {
                 width,

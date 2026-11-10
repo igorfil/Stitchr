@@ -1,6 +1,6 @@
 use crate::{
-    frame, layout, Alignment, ComposeError, ComposeOptions, Layout, RgbColor, SpecFrame,
-    SpecGradient, StackDirection,
+    fit::PlacementFit, frame, layout, Alignment, ComposeError, ComposeOptions, Layout, RgbColor,
+    SpecFrame, SpecGradient, StackDirection,
 };
 use serde::{Deserialize, Serialize};
 
@@ -47,6 +47,9 @@ pub struct ImagePlacement {
     /// Size the image is drawn at, in pixels.
     pub width: u32,
     pub height: u32,
+    /// How the source is fitted when its aspect ratio differs; `None` scales it directly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit: Option<PlacementFit>,
     pub position: SpecPosition,
 }
 
@@ -156,6 +159,7 @@ pub fn compose_spec(
             path: None,
             width: image.width,
             height: image.height,
+            fit: None,
             position: SpecPosition {
                 x: x + left,
                 y: y + top,
@@ -404,6 +408,7 @@ mod validation_tests {
             path: None,
             width,
             height,
+            fit: None,
             position: SpecPosition { x: 0, y: 0 },
         }
     }

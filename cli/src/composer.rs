@@ -137,6 +137,7 @@ mod tests {
                     path: None,
                     width: 3,
                     height: 2,
+                    fit: None,
                     position: SpecPosition { x: 0, y: 0 },
                 }],
                 layout: SpecLayout::Grid {
@@ -179,6 +180,7 @@ mod tests {
                         path: None,
                         width: 3,
                         height: 2,
+                        fit: None,
                         position: SpecPosition { x: 10, y: 10 },
                     },
                     ImagePlacement {
@@ -186,6 +188,7 @@ mod tests {
                         path: None,
                         width: 3,
                         height: 2,
+                        fit: None,
                         position: SpecPosition { x: 23, y: 10 },
                     },
                 ],

@@ -1,5 +1,6 @@
 pub mod color;
 mod diagnostics;
+pub mod fit;
 mod frame;
 mod gradient;
 mod layout;
@@ -7,6 +8,7 @@ pub mod spec;
 
 pub use color::{ColorParseError, RgbColor};
 pub use diagnostics::{label_warnings, LabelWarning};
+pub use fit::{FitTarget, PlacementFit};
 pub use frame::SpecFrame;
 pub use gradient::SpecGradient;
 pub use image::DynamicImage;

@@ -28,6 +28,18 @@ fn read_source(source: &Path) -> Result<String, CliError> {
     Ok(text)
 }
 
+/// Accepts the `{"ok": true, "spec": {...}}` response of `--json --print-spec` as well as a bare spec.
+fn unwrap_response(value: Value, path: &str) -> Result<Value, CliError> {
+    match value.get("ok") {
+        None => Ok(value),
+        Some(Value::Bool(true)) if value["spec"].is_object() => Ok(value["spec"].clone()),
+        Some(_) => Err(invalid_spec(
+            format!("spec {path} is a stitchr response without a spec"),
+            json!({ "path": path, "reason": "response without a spec" }),
+        )),
+    }
+}
+
 /// Parses and checks a spec printed by `--print-spec`.
 pub(crate) fn parse(text: &str, source: &Path) -> Result<CompositionSpec, CliError> {
     let path = source.to_string_lossy();
@@ -37,6 +49,7 @@ pub(crate) fn parse(text: &str, source: &Path) -> Result<CompositionSpec, CliErr
             json!({ "path": path, "reason": error.to_string() }),
         )
     })?;
+    let value = unwrap_response(value, &path)?;
     match value.get("schema_version") {
         None => {}
         Some(version) if *version == json!(SCHEMA_VERSION) => {}
@@ -139,6 +152,48 @@ mod tests {
             input_paths(&spec),
             [PathBuf::from("a.png"), PathBuf::from("b.png")]
         );
+    }
+
+    #[test]
+    fn json_print_spec_response_is_unwrapped() {
+        let bare: Value = serde_json::from_str(&spec_text(json!([image("a.png")]))).unwrap();
+        let response = json!({ "schema_version": 1, "ok": true, "spec": bare, "warnings": [] });
+
+        assert_eq!(
+            parse(&response.to_string(), file()).unwrap(),
+            parse(&bare.to_string(), file()).unwrap()
+        );
+    }
+
+    #[test]
+    fn error_response_is_an_invalid_spec() {
+        let response = json!({
+            "schema_version": 1, "ok": false,
+            "error": { "code": "input_error", "message": "cannot load a.png" }
+        });
+        let error = parse(&response.to_string(), file()).unwrap_err();
+
+        assert_eq!(error.code(), "invalid_spec");
+        assert_eq!(
+            error.details().unwrap()["reason"],
+            "response without a spec"
+        );
+    }
+
+    #[test]
+    fn success_response_without_a_spec_is_an_invalid_spec() {
+        let response = json!({ "schema_version": 1, "ok": true, "output": "out.png" });
+
+        assert_eq!(error_code(&response.to_string(), file()), "invalid_spec");
+    }
+
+    #[test]
+    fn wrapped_spec_with_an_unknown_version_is_rejected() {
+        let mut bare: Value = serde_json::from_str(&spec_text(json!([image("a.png")]))).unwrap();
+        bare["schema_version"] = json!(2);
+        let response = json!({ "schema_version": 1, "ok": true, "spec": bare });
+
+        assert_eq!(error_code(&response.to_string(), file()), "invalid_spec");
     }
 
     #[test]

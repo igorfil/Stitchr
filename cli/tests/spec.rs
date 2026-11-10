@@ -347,3 +347,50 @@ fn fitted_spec_round_trips() {
         pixels(&directory, "direct.png")
     );
 }
+
+#[test]
+fn documented_json_round_trip_renders() {
+    let directory = fixtures();
+    let printed = run(
+        &directory,
+        &[
+            "--json",
+            "red.png",
+            "blue.png",
+            "--layout",
+            "horizontal",
+            "--print-spec",
+        ],
+    );
+    std::fs::write(directory.path().join("spec.json"), &printed.stdout).unwrap();
+
+    let output = run(
+        &directory,
+        &["--json", "--spec", "spec.json", "-o", "out.png"],
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(json_of(&output)["width"], 6);
+}
+
+#[test]
+fn json_response_spec_from_stdin_renders() {
+    let directory = fixtures();
+    let printed = run(
+        &directory,
+        &["--json", "red.png", "blue.png", "--print-spec"],
+    );
+
+    let output = run_with_stdin(
+        &directory,
+        &["--json", "--spec", "-", "-o", "out.png"],
+        &printed.stdout,
+    );
+
+    assert_eq!(json_of(&output)["ok"], true);
+}

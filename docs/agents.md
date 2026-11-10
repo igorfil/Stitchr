@@ -57,6 +57,7 @@ Rules:
 
 - Inputs are loaded from each image's `path`; relative paths are relative to the process working directory. `name` is informational.
 - Each input must still have the `width` and `height` recorded in the spec, otherwise the request fails with `image_size_mismatch`.
+- The file can be the bare spec printed by `--print-spec` or the whole `--json --print-spec` response; the `spec` object is taken from the response. An error response is rejected with `invalid_spec`.
 - `schema_version`, when present, must be `1`. Unknown fields are ignored.
 - `--spec` cannot be combined with positional inputs. With `--spec -`, no image may also use `-`.
 - Malformed or inconsistent specs fail with `invalid_spec` (exit code 2), or with the engine's error code, such as `label_count_mismatch` or `split_size_mismatch`.

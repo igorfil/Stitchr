@@ -86,7 +86,7 @@ Successful response fields depend on the operation:
 
 Built-in help/version flags are handled during argument parsing. Otherwise, `--help-json` takes precedence over `--print-spec`, which takes precedence over rendering. Neither discovery nor spec inspection writes an output image.
 
-Without `--json`, `--help-json` and `--print-spec` still print their original top-level objects, now with `schema_version: 1`. Other human-readable output is unchanged: successful renders print the output path, and failures print a diagnostic to stderr.
+Without `--json`, `--help-json` and `--print-spec` still print their original top-level objects, now with `schema_version: 1`. Other human-readable output is unchanged: successful renders print the output path (nothing extra with `-o -`), and failures print a diagnostic to stderr.
 
 Place `--json` before `--`. Arguments following `--` are input paths, even if named `--json`. A separate `--json` flag is recognized for error reporting even when an earlier argument is invalid; `--json=true` is invalid syntax and returns `invalid_arguments`.
 
@@ -115,9 +115,9 @@ Branch on `error.code`, not `error.message`. Messages may include paths and oper
 
 | Code | Meaning / recovery |
 | --- | --- |
-| `invalid_arguments` | Missing inputs, unknown flags, invalid enum/color/numeric values, or wrong argument arity. Inspect the schema and correct the arguments. |
-| `input_error` | Input is missing, unreadable, corrupt, or unsupported. Check its path and PNG/JPEG encoding. |
-| `unsupported_output_format` | Choose an output ending in `.png`, `.jpg`, or `.jpeg`. |
+| `invalid_arguments` | Missing inputs, unknown flags, invalid enum/color/numeric values, or wrong argument arity. Also: `-` used as an input more than once, `-o -` with `--json`, or `-o -` without `--format`. Inspect the schema and correct the arguments. |
+| `input_error` | Input is missing, unreadable, corrupt, or unsupported. Check its path (or stdin bytes for `-`) and PNG/JPEG encoding. |
+| `unsupported_output_format` | Choose an output ending in `.png`, `.jpg`, or `.jpeg`, or pass `--format png\|jpeg`. |
 | `output_error` | Check the destination directory, permissions, available space, and whether the destination is a directory. |
 | `freeform_position_count` | Supply exactly one `--position X Y` pair per input image. |
 | `split_size_mismatch` | Use identically sized inputs, or choose a grid/stack layout. Stitchr does not resize inputs for split mode. |
@@ -140,6 +140,7 @@ Some engine-level codes are defensive and are not normally reachable through val
 ## Composition rules
 
 - Inputs are local PNG/JPEG paths, in paint order. Repeated paths are allowed. EXIF orientation is applied before planning.
+- `-` as an input reads one image from stdin (format detected from content); it may appear only once and is named `"-"` in the spec. Use `./-` for a file named `-`.
 - No automatic resizing or cropping occurs. Output dimensions are derived from inputs and placement.
 - Grid/stack spacing sets both gaps and equal outer margins. Grid columns default to `2`; spacing defaults to `0`; alignment defaults to `start`.
 - Alignment is within each grid cell or along a stack's cross-axis. Center alignment rounds offsets down to whole pixels.
@@ -148,7 +149,8 @@ Some engine-level codes are defensive and are not normally reachable through val
 - Background defaults to black. All outputs are opaque; input alpha blends onto the background. JPEG is lossy.
 - Coordinates, spacing, divider, and columns are unsigned 32-bit integers; columns must be at least `1`. Large valid integers can still exceed composition limits.
 - The RGBA canvas buffer is limited to 512 MiB. Input decoding and intermediate buffers use additional memory.
-- Output defaults to `stitched.png`. The extension controls format, case-insensitively. Existing files are overwritten without a prompt; parent directories must already exist.
+- Output defaults to `stitched.png`. The extension controls format, case-insensitively, unless `--format png|jpeg` (alias `jpg`) overrides it. Existing files are overwritten without a prompt; parent directories must already exist.
+- `-o -` writes only the encoded image bytes to stdout and requires `--format`. It cannot be combined with `--json`, since stdout would no longer be a single JSON object; errors still go to stderr.
 - `--jpeg-quality` is an integer from `1` to `100`, default `75`. It applies only to JPEG output and is ignored for PNG. Values outside the range are `invalid_arguments` errors.
 
 ## Invoke without a shell

@@ -5,13 +5,26 @@ use clap::{Arg, ArgAction, CommandFactory, Parser, ValueEnum, ValueHint};
 use composer::{CliComposeParams, CliComposer};
 use error::CliError;
 use serde_json::{json, Value};
-use std::{path::PathBuf, process::ExitCode};
+use std::{
+    io::{Read, Write},
+    path::{Path, PathBuf},
+    process::ExitCode,
+};
 use stitchr_core::{
-    export_image_with_quality, load_image_with_metadata, render_spec, CompositionSpec,
-    DynamicImage, ExportFormat, LoadedImage, RgbColor, DEFAULT_JPEG_QUALITY,
+    export_image_with_quality, load_image_from_bytes, load_image_with_metadata, render_spec,
+    write_image, CompositionSpec, DynamicImage, ExportFormat, ImageMetadata, LoadedImage, RgbColor,
+    DEFAULT_JPEG_QUALITY,
 };
 
 const SCHEMA_VERSION: u32 = 1;
+const STDIO_PATH: &str = "-";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum CliFormat {
+    Png,
+    #[value(alias = "jpg")]
+    Jpeg,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum CliLayout {
@@ -44,7 +57,7 @@ enum CliGradientKind {
     after_help = "Examples:\n  stitchr img1.png img2.png --layout grid --spacing 10\n  stitchr img1.png img2.jpg --layout horizontal --alignment center -o combined.jpg\n  stitchr img1.png img2.png --layout freeform --position 0 0 --position 300 80 -o combined.png\n  stitchr light.png dark.png --layout split --divider 4 --background white -o split.png\n  stitchr before.png after.png --layout horizontal --spacing 16 --background white --label Before --label After -o labeled.png\n  stitchr img1.png img2.png --spacing 40 --background-gradient '#ff7e5f' '#feb47b' --gradient-angle 135 -o gradient.png\n  stitchr img1.png img2.png --background rebeccapurple --print-spec"
 )]
 struct Cli {
-    #[arg(required_unless_present = "help_json", num_args = 1.., value_name = "IMAGE", help = "Input PNG/JPEG paths (one or more; required unless --help-json/--schema)")]
+    #[arg(required_unless_present = "help_json", num_args = 1.., value_name = "IMAGE", help = "Input PNG/JPEG paths, or - to read one image from stdin (one or more; required unless --help-json/--schema)")]
     images: Vec<PathBuf>,
 
     #[arg(
@@ -123,9 +136,17 @@ struct Cli {
         short,
         default_value = "stitched.png",
         value_name = "FILE",
-        help = "Output file (.png, .jpg, or .jpeg; default: stitched.png)"
+        help = "Output file (.png, .jpg, or .jpeg; default: stitched.png), or - for stdout (requires --format; not with --json)"
     )]
     output: PathBuf,
+
+    #[arg(
+        long,
+        value_enum,
+        value_name = "FORMAT",
+        help = "Output format: png or jpeg; overrides the output extension (required with -o -)"
+    )]
+    format: Option<CliFormat>,
 
     #[arg(long, default_value_t = DEFAULT_JPEG_QUALITY, value_parser = clap::value_parser!(u8).range(1..=100), value_name = "QUALITY", help = "JPEG encoding quality (integer 1-100; only for .jpg/.jpeg output)")]
     jpeg_quality: u8,
@@ -229,7 +250,22 @@ fn schema() -> Value {
     })
 }
 
-fn output_format(output: &std::path::Path) -> Result<ExportFormat, CliError> {
+fn is_stdio(path: &Path) -> bool {
+    path.as_os_str() == STDIO_PATH
+}
+
+fn output_format(output: &Path, format: Option<CliFormat>) -> Result<ExportFormat, CliError> {
+    match format {
+        Some(CliFormat::Png) => return Ok(ExportFormat::Png),
+        Some(CliFormat::Jpeg) => return Ok(ExportFormat::Jpeg),
+        None if is_stdio(output) => {
+            return Err(CliError::new(
+                "unsupported_output_format",
+                "-o - requires --format png or --format jpeg",
+            ))
+        }
+        None => {}
+    }
     match output.extension().and_then(|extension| extension.to_str()) {
         Some(extension) if extension.eq_ignore_ascii_case("png") => Ok(ExportFormat::Png),
         Some(extension)
@@ -244,10 +280,29 @@ fn output_format(output: &std::path::Path) -> Result<ExportFormat, CliError> {
     }
 }
 
+fn load_stdin() -> Result<LoadedImage, CliError> {
+    let mut bytes = Vec::new();
+    std::io::stdin()
+        .lock()
+        .read_to_end(&mut bytes)
+        .map_err(|error| CliError::new("input_error", format!("cannot read stdin: {error}")))?;
+    let image = load_image_from_bytes(&bytes)
+        .map_err(|error| CliError::new("input_error", format!("cannot load stdin: {error}")))?;
+    let metadata = ImageMetadata {
+        name: STDIO_PATH.into(),
+        width: image.width(),
+        height: image.height(),
+    };
+    Ok(LoadedImage { image, metadata })
+}
+
 fn load_images(paths: &[PathBuf]) -> Result<Vec<LoadedImage>, CliError> {
     paths
         .iter()
         .map(|path| {
+            if is_stdio(path) {
+                return load_stdin();
+            }
             load_image_with_metadata(path).map_err(|error| {
                 CliError::new(
                     "input_error",
@@ -276,18 +331,70 @@ struct ExportResult {
     format: &'static str,
 }
 
+fn validate_stdin(images: &[PathBuf]) -> Result<(), CliError> {
+    if images.iter().filter(|path| is_stdio(path)).count() > 1 {
+        return Err(CliError::new(
+            "invalid_arguments",
+            "- (stdin) can be used as an input only once",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_stdout(output: &Path, format: Option<CliFormat>, json: bool) -> Result<(), CliError> {
+    if !is_stdio(output) {
+        return Ok(());
+    }
+    if json {
+        return Err(CliError::new(
+            "invalid_arguments",
+            "-o - cannot be combined with --json because stdout carries the image",
+        ));
+    }
+    if format.is_none() {
+        return Err(CliError::new(
+            "invalid_arguments",
+            "-o - requires --format png or --format jpeg",
+        ));
+    }
+    Ok(())
+}
+
+fn write_output(
+    output: &Path,
+    composed: &DynamicImage,
+    format: ExportFormat,
+    jpeg_quality: u8,
+) -> Result<(), CliError> {
+    if !is_stdio(output) {
+        return export_image_with_quality(composed, output, format, jpeg_quality).map_err(
+            |error| {
+                CliError::new(
+                    "output_error",
+                    format!("cannot write {}: {error}", output.display()),
+                )
+            },
+        );
+    }
+    // Encode fully before writing so an encoder failure never leaves a truncated image on stdout.
+    let mut bytes = Vec::new();
+    write_image(composed, &mut bytes, format, jpeg_quality)
+        .map_err(|error| CliError::new("output_error", format!("cannot encode image: {error}")))?;
+    let mut stdout = std::io::stdout().lock();
+    stdout
+        .write_all(&bytes)
+        .and_then(|()| stdout.flush())
+        .map_err(|error| CliError::new("output_error", format!("cannot write stdout: {error}")))
+}
+
 fn run(
     output: PathBuf,
     composed: DynamicImage,
+    format: Option<CliFormat>,
     jpeg_quality: u8,
 ) -> Result<ExportResult, CliError> {
-    let format = output_format(&output)?;
-    export_image_with_quality(&composed, &output, format, jpeg_quality).map_err(|error| {
-        CliError::new(
-            "output_error",
-            format!("cannot write {}: {error}", output.display()),
-        )
-    })?;
+    let format = output_format(&output, format)?;
+    write_output(&output, &composed, format, jpeg_quality)?;
     Ok(ExportResult {
         output,
         width: composed.width(),
@@ -358,6 +465,9 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    if let Err(error) = validate_stdin(&cli.images) {
+        return error.report(cli.json, ExitCode::from(2));
+    }
     let loaded = match load_images(&cli.images) {
         Ok(images) => images,
         Err(error) => {
@@ -411,6 +521,9 @@ fn main() -> ExitCode {
         };
     }
 
+    if let Err(error) = validate_stdout(&cli.output, cli.format, cli.json) {
+        return error.report(cli.json, ExitCode::from(2));
+    }
     let images = loaded
         .into_iter()
         .map(|loaded| loaded.image)
@@ -421,7 +534,7 @@ fn main() -> ExitCode {
             return CliError::from(error).report(cli.json, ExitCode::FAILURE);
         }
     };
-    match run(cli.output, composed, cli.jpeg_quality) {
+    match run(cli.output, composed, cli.format, cli.jpeg_quality) {
         Ok(result) => {
             if cli.json {
                 println!(
@@ -435,7 +548,7 @@ fn main() -> ExitCode {
                         "format": result.format
                     })
                 );
-            } else {
+            } else if !is_stdio(&result.output) {
                 println!("{}", result.output.display());
             }
             ExitCode::SUCCESS
@@ -534,6 +647,8 @@ mod tests {
         assert_eq!(by_name("gradient_angle")["default"], 180);
         assert_eq!(by_name("jpeg_quality")["type"], "integer");
         assert_eq!(by_name("jpeg_quality")["default"], 75);
+        assert_eq!(by_name("format")["enum"], json!(["png", "jpeg"]));
+        assert!(by_name("format")["default"].is_null());
         assert!(Cli::try_parse_from(["stitchr", "image.png", "--jpeg-quality", "0"]).is_err());
         assert!(Cli::try_parse_from(["stitchr", "image.png", "--jpeg-quality", "101"]).is_err());
         assert!(Cli::try_parse_from([
@@ -615,9 +730,14 @@ mod tests {
             .collect::<Vec<_>>();
         let composed = render_spec(&spec, &pixels).unwrap();
         assert_eq!(
-            run(freeform.output.clone(), composed, freeform.jpeg_quality)
-                .unwrap()
-                .output,
+            run(
+                freeform.output.clone(),
+                composed,
+                freeform.format,
+                freeform.jpeg_quality
+            )
+            .unwrap()
+            .output,
             png
         );
         let result = stitchr_core::load_image(&png).unwrap();
@@ -662,9 +782,14 @@ mod tests {
             .collect::<Vec<_>>();
         let composed = render_spec(&spec, &pixels).unwrap();
         assert_eq!(
-            run(vertical.output.clone(), composed, vertical.jpeg_quality)
-                .unwrap()
-                .output,
+            run(
+                vertical.output.clone(),
+                composed,
+                vertical.format,
+                vertical.jpeg_quality
+            )
+            .unwrap()
+            .output,
             jpeg
         );
         let result = stitchr_core::load_image(&jpeg).unwrap();

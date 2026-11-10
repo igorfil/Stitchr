@@ -14,9 +14,7 @@ pub use spec::{
     SpecLayout, SpecPosition,
 };
 
-use image::{
-    imageops, GenericImage, ImageDecoder, ImageFormat, ImageReader, Limits, Pixel, Rgba, RgbaImage,
-};
+use image::{imageops, GenericImage, ImageDecoder, ImageReader, Limits, Pixel, Rgba, RgbaImage};
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,7 +24,18 @@ pub enum ExportFormat {
 }
 
 pub fn load_image(path: impl AsRef<Path>) -> image::ImageResult<DynamicImage> {
-    let mut decoder = ImageReader::open(path)?.into_decoder()?;
+    decode(ImageReader::open(path)?)
+}
+
+/// Detects the format from the content, not a file extension.
+pub fn load_image_from_bytes(bytes: &[u8]) -> image::ImageResult<DynamicImage> {
+    decode(ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format()?)
+}
+
+fn decode<R: std::io::BufRead + std::io::Seek>(
+    reader: ImageReader<R>,
+) -> image::ImageResult<DynamicImage> {
+    let mut decoder = reader.into_decoder()?;
     let mut limits = Limits::default();
     limits.reserve(decoder.total_bytes())?;
     decoder.set_limits(limits)?;
@@ -282,15 +291,26 @@ pub fn export_image_with_quality(
     format: ExportFormat,
     jpeg_quality: u8,
 ) -> image::ImageResult<()> {
+    let mut file = std::io::BufWriter::new(std::fs::File::create(path)?);
+    write_image(image, &mut file, format, jpeg_quality)?;
+    std::io::Write::flush(&mut file).map_err(image::ImageError::from)
+}
+
+/// `jpeg_quality` (1-100) applies only to JPEG output.
+pub fn write_image(
+    image: &DynamicImage,
+    writer: impl std::io::Write,
+    format: ExportFormat,
+    jpeg_quality: u8,
+) -> image::ImageResult<()> {
     match format {
-        ExportFormat::Png => image.save_with_format(path, ImageFormat::Png),
+        ExportFormat::Png => image.write_with_encoder(image::codecs::png::PngEncoder::new(writer)),
         ExportFormat::Jpeg => {
             let mut background =
                 RgbaImage::from_pixel(image.width(), image.height(), Rgba([255, 255, 255, 255]));
             imageops::overlay(&mut background, image, 0, 0);
             let rgb = DynamicImage::ImageRgba8(background).to_rgb8();
-            let file = std::io::BufWriter::new(std::fs::File::create(path)?);
-            image::codecs::jpeg::JpegEncoder::new_with_quality(file, jpeg_quality)
+            image::codecs::jpeg::JpegEncoder::new_with_quality(writer, jpeg_quality)
                 .encode_image(&rgb)
         }
     }
@@ -1560,6 +1580,29 @@ mod tests {
 
         let size = |path: &Path| std::fs::metadata(path).unwrap().len();
         assert!(size(&low) < size(&high));
+    }
+
+    #[test]
+    fn bytes_written_by_write_image_load_back_without_an_extension() {
+        let original = solid(3, 2, RED);
+        let mut png = Vec::new();
+        let mut jpeg = Vec::new();
+
+        write_image(&original, &mut png, ExportFormat::Png, DEFAULT_JPEG_QUALITY).unwrap();
+        write_image(
+            &original,
+            &mut jpeg,
+            ExportFormat::Jpeg,
+            DEFAULT_JPEG_QUALITY,
+        )
+        .unwrap();
+
+        assert_eq!(
+            load_image_from_bytes(&png).unwrap().to_rgba8(),
+            original.to_rgba8()
+        );
+        assert_eq!(load_image_from_bytes(&jpeg).unwrap().dimensions(), (3, 2));
+        assert!(load_image_from_bytes(b"not an image").is_err());
     }
 
     #[test]

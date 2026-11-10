@@ -139,7 +139,7 @@ Some engine-level codes are defensive and are not normally reachable through val
 
 ## Composition rules
 
-- Inputs are local PNG/JPEG paths, in paint order. Repeated paths are allowed. EXIF orientation is applied before planning.
+- Inputs are local PNG/JPEG paths, in paint order. The format is detected from file content, so the extension does not matter. Repeated paths are allowed. EXIF orientation is applied before planning.
 - `-` as an input reads one image from stdin (format detected from content); it may appear only once and is named `"-"` in the spec. Use `./-` for a file named `-`.
 - No automatic resizing or cropping occurs. Output dimensions are derived from inputs and placement.
 - Grid/stack spacing sets both gaps and equal outer margins. Grid columns default to `2`; spacing defaults to `0`; alignment defaults to `start`.

@@ -23,8 +23,9 @@ pub enum ExportFormat {
     Jpeg,
 }
 
+/// Detects the format from the content, falling back to the extension.
 pub fn load_image(path: impl AsRef<Path>) -> image::ImageResult<DynamicImage> {
-    decode(ImageReader::open(path)?)
+    decode(ImageReader::open(path)?.with_guessed_format()?)
 }
 
 /// Detects the format from the content, not a file extension.
@@ -439,6 +440,69 @@ mod tests {
         assert_eq!(loaded.metadata.name, "source.png");
         assert_eq!((loaded.metadata.width, loaded.metadata.height), (7, 3));
         assert_eq!(loaded.image.dimensions(), (7, 3));
+    }
+
+    #[test]
+    fn image_loader_detects_png_content_behind_a_jpeg_extension() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("actually-png.jpg");
+        let original = solid(3, 2, RED);
+        export_image(&original, &path, ExportFormat::Png).unwrap();
+
+        let loaded = load_image(&path).unwrap();
+
+        assert_eq!(loaded.to_rgba8(), original.to_rgba8());
+    }
+
+    #[test]
+    fn image_loader_detects_jpeg_content_behind_a_png_extension() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("actually-jpeg.png");
+        export_image(&solid(5, 4, RED), &path, ExportFormat::Jpeg).unwrap();
+
+        let loaded = load_image(&path).unwrap();
+
+        assert_eq!(loaded.dimensions(), (5, 4));
+    }
+
+    #[test]
+    fn image_loader_detects_content_without_an_extension() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("screenshot");
+        let original = solid(2, 2, BLUE);
+        export_image(&original, &path, ExportFormat::Png).unwrap();
+
+        assert_eq!(load_image(&path).unwrap().to_rgba8(), original.to_rgba8());
+    }
+
+    #[test]
+    fn image_loader_detects_content_behind_an_unknown_extension() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("screenshot.dat");
+        export_image(&solid(2, 3, BLUE), &path, ExportFormat::Jpeg).unwrap();
+
+        assert_eq!(load_image(&path).unwrap().dimensions(), (2, 3));
+    }
+
+    #[test]
+    fn image_loader_rejects_non_image_content_with_an_image_extension() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("text.png");
+        std::fs::write(&path, "not an image").unwrap();
+
+        assert!(load_image(&path).is_err());
+    }
+
+    #[test]
+    fn image_loader_metadata_keeps_the_misleading_file_name() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("photo.jpeg");
+        export_image(&solid(4, 1, RED), &path, ExportFormat::Png).unwrap();
+
+        let loaded = load_image_with_metadata(&path).unwrap();
+
+        assert_eq!(loaded.metadata.name, "photo.jpeg");
+        assert_eq!((loaded.metadata.width, loaded.metadata.height), (4, 1));
     }
 
     #[test]

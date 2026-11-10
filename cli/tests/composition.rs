@@ -170,3 +170,41 @@ fn cli_renders_split_of_same_size_images() {
     assert_eq!(image.get_pixel(0, 4).0, [255, 0, 0, 255]);
     assert_eq!(image.get_pixel(9, 0).0, [0, 0, 255, 255]);
 }
+
+#[test]
+fn cli_renders_inputs_whose_extension_does_not_match_their_content() {
+    let directory = tempfile::tempdir().unwrap();
+    write_image(&directory, "red.png", 2, 1, [255, 0, 0]);
+    write_image(&directory, "blue.png", 1, 1, [0, 0, 255]);
+    std::fs::rename(
+        directory.path().join("red.png"),
+        directory.path().join("red.jpg"),
+    )
+    .unwrap();
+    std::fs::rename(
+        directory.path().join("blue.png"),
+        directory.path().join("blue"),
+    )
+    .unwrap();
+
+    let result = run_cli(
+        &directory,
+        &["red.jpg", "blue", "--layout", "horizontal", "-o", "out.png"],
+    );
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    let image = image::open(directory.path().join("out.png"))
+        .unwrap()
+        .to_rgba8();
+    assert_canvas(&image, 3, 1, |x, _| {
+        if x < 2 {
+            [255, 0, 0, 255]
+        } else {
+            [0, 0, 255, 255]
+        }
+    });
+}

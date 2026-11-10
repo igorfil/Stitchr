@@ -82,7 +82,7 @@ stitchr before.png after.png --layout horizontal --spacing 16 --background white
   --label Before --label After -o labeled.png
 ```
 
-Pass one `--label` per input, in order, to draw a border around each image with a header tab holding its label in the top-left corner. Use `--label ""` for a border without a tab. The frame is added around the image, so no image pixels are covered. `--border-width` (default 2), `--border-color` (default gray), and `--label-size` (font size in pixels, default 20) adjust the frame. Grid, stack, and freeform layouts frame each image; freeform positions place the frame's top-left corner. Split layouts get one border around the whole canvas, with each slice's tab placed where that slice starts on the top edge.
+Pass one `--label` per input, in order, to draw a border tightly around each image, with a tab holding its label on top of the image's top-left corner. The tab covers that part of the image; the border adds `--border-width` pixels on each side. Use `--label ""` for a border without a tab. `--border-width` (default 2), `--border-color` (default gray), and `--label-size` (font size in pixels, default 20) adjust the frame. Grid, stack, and freeform layouts frame each image; freeform positions place the frame's top-left corner. Split layouts get one border around the whole canvas, with each slice's tab placed where that slice starts on the top edge.
 
 ### Inspect a composition
 

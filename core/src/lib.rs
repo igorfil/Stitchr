@@ -167,8 +167,8 @@ fn render_plan_with(
     }
     let mut canvas = new_background(plan.width, plan.height, plan.background_color, gradient)?;
     for (index, (image, &(x, y))) in images.iter().zip(&plan.positions).enumerate() {
-        decorate(&mut canvas, index)?;
         imageops::overlay(&mut canvas, image, i64::from(x), i64::from(y));
+        decorate(&mut canvas, index)?;
     }
     // `imageops::overlay` can round an opaque destination's alpha down to 254.
     for pixel in canvas.pixels_mut() {
@@ -2655,8 +2655,8 @@ mod tests {
     }
 
     #[test]
-    fn labels_add_a_header_tab_above_each_image_without_covering_it() {
-        let images = [solid(40, 10, RED), solid(40, 10, BLUE)];
+    fn labels_overlay_the_top_left_of_their_image_inside_a_tight_border() {
+        let images = [solid(40, 20, RED), solid(40, 20, BLUE)];
         let spec = framed_spec(
             &images,
             SpecLayout::Grid {
@@ -2666,21 +2666,19 @@ mod tests {
             },
             frame(&["A", ""], 2, GREEN),
         );
-        let first = &spec.images[0].position;
-        let second = &spec.images[1].position;
 
-        assert_eq!((first.x, second.y), (2, first.y));
-        assert!(first.y > 2);
-        assert_eq!(spec.height, 10 + first.y + 2);
+        assert_eq!((spec.width, spec.height), (88, 24));
+        assert_eq!(spec.images[0].position, SpecPosition { x: 2, y: 2 });
+        assert_eq!(spec.images[1].position, SpecPosition { x: 46, y: 2 });
         let result = render_spec(&spec, &images).unwrap();
-        assert_eq!(count_color(&result, RED), 400);
-        assert_eq!(count_color(&result, BLUE), 400);
-        assert_eq!(result.get_pixel(3, first.y - 1).0, GREEN);
-        assert_eq!(result.get_pixel(second.x + 3, second.y - 1).0, BLACK);
+        assert_eq!(result.get_pixel(2, 2).0, GREEN);
+        assert_eq!(result.get_pixel(41, 21).0, RED);
+        assert!(count_color(&result, RED) < 800);
+        assert_eq!(count_color(&result, BLUE), 800);
     }
 
     #[test]
-    fn labels_wider_than_their_image_widen_its_tile() {
+    fn long_labels_do_not_change_the_frame_size() {
         let images = [solid(1, 1, RED)];
         let spec = framed_spec(
             &images,
@@ -2690,8 +2688,7 @@ mod tests {
             frame(&["A much longer label"], 1, GREEN),
         );
 
-        assert!(spec.width > 3);
-        assert_eq!(count_color(&render_spec(&spec, &images).unwrap(), RED), 1);
+        assert_eq!((spec.width, spec.height), (3, 3));
     }
 
     #[test]

@@ -30,15 +30,7 @@ fn padding_y(frame: &SpecFrame) -> u32 {
     frame.label_size / 4
 }
 
-fn has_labels(frame: &SpecFrame) -> bool {
-    frame.labels.iter().any(|label| !label.is_empty())
-}
-
-/// Height between the top border and the image; shared by all tiles so labeled rows line up.
 fn header_height(frame: &SpecFrame) -> u32 {
-    if !has_labels(frame) {
-        return 0;
-    }
     let font = font();
     let scaled = font.as_scaled(scale(frame));
     (scaled.ascent() - scaled.descent()).ceil() as u32 + 2 * padding_y(frame)
@@ -81,31 +73,21 @@ fn tab_top_width(frame: &SpecFrame, label: &str, left_inset: u32) -> u32 {
 
 /// Offset of an image's top-left corner from its tile's top-left corner.
 pub(crate) fn inset(frame: &SpecFrame) -> (u32, u32) {
-    (frame.border_width, tab_height(frame))
+    (frame.border_width, frame.border_width)
 }
 
 pub(crate) fn tile_size(
     frame: &SpecFrame,
-    label: &str,
     (width, height): (u32, u32),
 ) -> Result<(u32, u32), ComposeError> {
     let border = frame
         .border_width
         .checked_mul(2)
         .ok_or(ComposeError::SizeOverflow)?;
-    let framed_width = width
+    width
         .checked_add(border)
-        .ok_or(ComposeError::SizeOverflow)?;
-    let tab_width = if label.is_empty() {
-        0
-    } else {
-        tab_top_width(frame, label, frame.border_width)
-    };
-    let framed_height = height
-        .checked_add(border)
-        .and_then(|height| height.checked_add(header_height(frame)))
-        .ok_or(ComposeError::SizeOverflow)?;
-    Ok((framed_width.max(tab_width), framed_height))
+        .zip(height.checked_add(border))
+        .ok_or(ComposeError::SizeOverflow)
 }
 
 fn blend(canvas: &mut RgbaImage, (x, y): (i64, i64), color: RgbColor, coverage: f32) {
@@ -253,7 +235,7 @@ pub(crate) fn draw_tile(
         i64::from(image_position.0) - i64::from(left),
         i64::from(image_position.1) - i64::from(top),
     );
-    draw_border(canvas, frame, origin, tile_size(frame, label, image_size)?);
+    draw_border(canvas, frame, origin, tile_size(frame, image_size)?);
     if !label.is_empty() {
         draw_tab(canvas, frame, label, origin, frame.border_width);
     }

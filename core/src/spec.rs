@@ -93,8 +93,7 @@ pub fn compose_spec(
     let tiles = match &params.frame {
         Some(frame) if !split => dimensions
             .iter()
-            .zip(&frame.labels)
-            .map(|(&size, label)| frame::tile_size(frame, label, size))
+            .map(|&size| frame::tile_size(frame, size))
             .collect::<Result<Vec<_>, _>>()?,
         _ => dimensions,
     };
@@ -140,7 +139,7 @@ pub fn compose_spec(
     )?;
     let (left, top) = params.frame.as_ref().map_or((0, 0), frame::inset);
     let (width, height) = match &params.frame {
-        Some(frame) if split => frame::tile_size(frame, "", (plan.width, plan.height))?,
+        Some(frame) if split => frame::tile_size(frame, (plan.width, plan.height))?,
         _ => (plan.width, plan.height),
     };
     let images = images

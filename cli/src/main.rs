@@ -29,13 +29,19 @@ enum CliAlignment {
     End,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum CliGradientKind {
+    Linear,
+    Radial,
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "stitchr",
     version,
     about = "Combine PNG and JPEG images into one image",
     long_about = "Arrange PNG/JPEG images in a grid, horizontal or vertical stack, at explicit freeform positions, or as diagonal split slices of same-size images. Output format is selected by the output file extension.",
-    after_help = "Examples:\n  stitchr img1.png img2.png --layout grid --spacing 10\n  stitchr img1.png img2.jpg --layout horizontal --alignment center -o combined.jpg\n  stitchr img1.png img2.png --layout freeform --position 0 0 --position 300 80 -o combined.png\n  stitchr light.png dark.png --layout split --divider 4 --background white -o split.png\n  stitchr before.png after.png --layout horizontal --spacing 16 --background white --label Before --label After -o labeled.png\n  stitchr img1.png img2.png --background rebeccapurple --print-spec"
+    after_help = "Examples:\n  stitchr img1.png img2.png --layout grid --spacing 10\n  stitchr img1.png img2.jpg --layout horizontal --alignment center -o combined.jpg\n  stitchr img1.png img2.png --layout freeform --position 0 0 --position 300 80 -o combined.png\n  stitchr light.png dark.png --layout split --divider 4 --background white -o split.png\n  stitchr before.png after.png --layout horizontal --spacing 16 --background white --label Before --label After -o labeled.png\n  stitchr img1.png img2.png --spacing 40 --background-gradient '#ff7e5f' '#feb47b' --gradient-angle 135 -o gradient.png\n  stitchr img1.png img2.png --background rebeccapurple --print-spec"
 )]
 struct Cli {
     #[arg(required_unless_present = "help_json", num_args = 1.., value_name = "IMAGE", help = "Input PNG/JPEG paths (one or more; required unless --help-json/--schema)")]
@@ -70,6 +76,20 @@ struct Cli {
 
     #[arg(long = "background", default_value_t = RgbColor::default(), value_name = "COLOR", help = "Opaque background: RGB #RRGGBB, rgb(r,g,b), or common color name")]
     background_color: RgbColor,
+
+    #[arg(long, num_args = 2, value_names = ["FROM", "TO"], conflicts_with = "background_color", help = "Gradient background from one color to another, instead of --background; split dividers use FROM")]
+    background_gradient: Vec<RgbColor>,
+
+    #[arg(
+        long,
+        value_enum,
+        default_value = "linear",
+        help = "Gradient shape: linear, or radial from the canvas center (only with --background-gradient)"
+    )]
+    gradient_kind: CliGradientKind,
+
+    #[arg(long, default_value_t = 180, value_parser = clap::value_parser!(u32).range(0..360), value_name = "DEGREES", help = "Linear gradient direction like CSS: 0 up, 90 right, 180 down (integer 0-359; only for linear gradients)")]
+    gradient_angle: u32,
 
     #[arg(long, action = ArgAction::Append, num_args = 2, value_names = ["X", "Y"], help = "Freeform top-left coordinates (nonnegative integers; repeat once per image)")]
     position: Vec<u32>,
@@ -129,7 +149,10 @@ fn argument_schema(arg: &Arg) -> Value {
         ArgAction::SetTrue | ArgAction::Help | ArgAction::Version
     );
     let path = arg.get_value_hint() == ValueHint::AnyPath;
-    let color = matches!(arg.get_id().as_str(), "background_color" | "border_color");
+    let color = matches!(
+        arg.get_id().as_str(),
+        "background_color" | "border_color" | "background_gradient"
+    );
     let text = arg.get_id().as_str() == "label";
     let value_type = if boolean {
         "boolean"
@@ -348,6 +371,9 @@ fn main() -> ExitCode {
             border_width: cli.border_width,
             border_color: cli.border_color,
             label_size: cli.label_size,
+            background_gradient: &cli.background_gradient,
+            gradient_kind: cli.gradient_kind,
+            gradient_angle: cli.gradient_angle,
         },
     ) {
         Ok(spec) => spec,
@@ -489,6 +515,26 @@ mod tests {
         assert_eq!(by_name("label")["repeatable"], true);
         assert_eq!(by_name("border_color")["format"], "color");
         assert_eq!(by_name("border_width")["type"], "integer");
+        assert_eq!(by_name("background_gradient")["format"], "color");
+        assert_eq!(
+            by_name("background_gradient")["value_names"],
+            json!(["FROM", "TO"])
+        );
+        assert_eq!(
+            by_name("gradient_kind")["enum"],
+            json!(["linear", "radial"])
+        );
+        assert_eq!(by_name("gradient_angle")["default"], 180);
+        assert!(Cli::try_parse_from([
+            "stitchr",
+            "image.png",
+            "--background",
+            "red",
+            "--background-gradient",
+            "red",
+            "blue",
+        ])
+        .is_err());
         assert!(args.iter().all(|arg| arg["name"] != "max_size"));
         assert_eq!(by_name("position")["repeatable"], true);
         assert_eq!(by_name("position")["values_per_occurrence"]["min"], 2);
@@ -546,6 +592,9 @@ mod tests {
                 border_width: freeform.border_width,
                 border_color: freeform.border_color,
                 label_size: freeform.label_size,
+                background_gradient: &freeform.background_gradient,
+                gradient_kind: freeform.gradient_kind,
+                gradient_angle: freeform.gradient_angle,
             },
         )
         .unwrap();
@@ -585,6 +634,9 @@ mod tests {
                 border_width: vertical.border_width,
                 border_color: vertical.border_color,
                 label_size: vertical.label_size,
+                background_gradient: &vertical.background_gradient,
+                gradient_kind: vertical.gradient_kind,
+                gradient_angle: vertical.gradient_angle,
             },
         )
         .unwrap();

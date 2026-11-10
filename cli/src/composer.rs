@@ -1,7 +1,7 @@
-use crate::{CliAlignment, CliLayout};
+use crate::{CliAlignment, CliGradientKind, CliLayout};
 use stitchr_core::{
     compose_spec, Alignment, ComposeError, CompositionParams, CompositionSpec, ImageMetadata,
-    RgbColor, SpecFrame, SpecLayout, SpecPosition, StackDirection,
+    RgbColor, SpecFrame, SpecGradient, SpecLayout, SpecPosition, StackDirection,
 };
 
 pub(crate) struct CliComposer;
@@ -18,6 +18,9 @@ pub(crate) struct CliComposeParams<'a> {
     pub border_width: u32,
     pub border_color: RgbColor,
     pub label_size: u32,
+    pub background_gradient: &'a [RgbColor],
+    pub gradient_kind: CliGradientKind,
+    pub gradient_angle: u32,
 }
 
 impl CliComposer {
@@ -65,11 +68,26 @@ impl CliComposer {
             border_color: cli_params.border_color,
             label_size: cli_params.label_size,
         });
+        let background_gradient = match (cli_params.background_gradient, cli_params.gradient_kind) {
+            (&[from, to], CliGradientKind::Linear) => Some(SpecGradient::Linear {
+                from,
+                to,
+                angle: cli_params.gradient_angle,
+            }),
+            (&[from, to], CliGradientKind::Radial) => Some(SpecGradient::Radial { from, to }),
+            _ => None,
+        };
+        let background_color = cli_params
+            .background_gradient
+            .first()
+            .copied()
+            .unwrap_or(cli_params.background_color);
         compose_spec(
             images,
             &CompositionParams {
                 layout,
-                background_color: cli_params.background_color,
+                background_color,
+                background_gradient,
                 frame,
             },
         )
@@ -96,6 +114,9 @@ mod tests {
             border_width: cli.border_width,
             border_color: cli.border_color,
             label_size: cli.label_size,
+            background_gradient: &cli.background_gradient,
+            gradient_kind: cli.gradient_kind,
+            gradient_angle: cli.gradient_angle,
         }
     }
 
@@ -142,6 +163,7 @@ mod tests {
                 width: 3,
                 height: 2,
                 background_color: RgbColor::default(),
+                background_gradient: None,
                 frame: None,
             }
         );
@@ -185,6 +207,7 @@ mod tests {
                 width: 36,
                 height: 22,
                 background_color: RgbColor::default(),
+                background_gradient: None,
                 frame: None,
             }
         );
@@ -549,5 +572,53 @@ mod tests {
             "invalid",
         ])
         .is_err());
+    }
+
+    #[test]
+    fn gradient_flags_build_a_gradient_and_use_its_first_color_as_the_solid_background() {
+        let red = RgbColor {
+            red: 255,
+            green: 0,
+            blue: 0,
+        };
+        let blue = RgbColor {
+            red: 0,
+            green: 0,
+            blue: 255,
+        };
+        let linear = compose_args(&[
+            "image.png",
+            "--background-gradient",
+            "red",
+            "blue",
+            "--gradient-angle",
+            "45",
+        ]);
+        let radial = compose_args(&[
+            "image.png",
+            "--background-gradient",
+            "red",
+            "blue",
+            "--gradient-kind",
+            "radial",
+        ]);
+
+        assert_eq!(
+            linear.background_gradient,
+            Some(SpecGradient::Linear {
+                from: red,
+                to: blue,
+                angle: 45
+            })
+        );
+        assert_eq!(linear.background_color, red);
+        assert_eq!(
+            radial.background_gradient,
+            Some(SpecGradient::Radial {
+                from: red,
+                to: blue
+            })
+        );
+        assert_eq!(compose_args(&["image.png"]).background_gradient, None);
     }
 }

@@ -64,6 +64,17 @@ stitchr docs/examples/light.png docs/examples/dark.png \
 
 Split inputs must have identical dimensions. The output keeps those dimensions and shows a diagonal slice of each input, in argument order. `--divider` sets the width of the background-colored line between slices.
 
+### Gradient background
+
+```sh
+stitchr img1.png img2.png --spacing 40 \
+  --background-gradient '#ff7e5f' '#6a3093' --gradient-angle 135 -o gradient.png
+stitchr img1.png img2.png --layout vertical --spacing 30 \
+  --background-gradient white navy --gradient-kind radial -o radial.png
+```
+
+`--background-gradient FROM TO` replaces the solid `--background`. `--gradient-kind` is `linear` (default) or `radial` (from the canvas center out to the corners). `--gradient-angle` sets the linear direction in degrees like CSS: `0` up, `90` right, `180` down (default). Split dividers stay solid and use the `FROM` color.
+
 ### Borders and labels
 
 ```sh

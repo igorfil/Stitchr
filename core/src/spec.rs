@@ -1,6 +1,6 @@
 use crate::{
     frame, layout, Alignment, ComposeError, ComposeOptions, Layout, RgbColor, SpecFrame,
-    StackDirection,
+    SpecGradient, StackDirection,
 };
 use serde::{Deserialize, Serialize};
 
@@ -48,6 +48,7 @@ pub struct ImagePlacement {
 pub struct CompositionParams {
     pub layout: SpecLayout,
     pub background_color: RgbColor,
+    pub background_gradient: Option<SpecGradient>,
     pub frame: Option<SpecFrame>,
 }
 
@@ -58,6 +59,8 @@ pub struct CompositionSpec {
     pub width: u32,
     pub height: u32,
     pub background_color: RgbColor,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_gradient: Option<SpecGradient>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frame: Option<SpecFrame>,
 }
@@ -157,6 +160,7 @@ pub fn compose_spec(
         width,
         height,
         background_color: params.background_color,
+        background_gradient: params.background_gradient,
         frame: params.frame.clone(),
     })
 }
@@ -188,6 +192,7 @@ mod tests {
                 alignment: Alignment::End,
             },
             background_color: RgbColor::default(),
+            background_gradient: None,
             frame: None,
         };
 
@@ -215,6 +220,7 @@ mod tests {
                     alignment: Alignment::End,
                 },
                 background_color: RgbColor::default(),
+                background_gradient: None,
                 frame: None,
             },
         )
@@ -249,6 +255,7 @@ mod tests {
             &CompositionParams {
                 layout: SpecLayout::Split { divider: 2 },
                 background_color: RgbColor::default(),
+                background_gradient: None,
                 frame: None,
             },
         )
@@ -278,6 +285,7 @@ mod tests {
                         positions: vec![SpecPosition { x: 0, y: 0 }],
                     },
                     background_color: RgbColor::default(),
+                    background_gradient: None,
                     frame: None,
                 }
             ),
@@ -300,6 +308,7 @@ mod tests {
                     alignment: Alignment::Center,
                 },
                 background_color: RgbColor::default(),
+                background_gradient: None,
                 frame: None,
             },
         )
@@ -322,6 +331,7 @@ mod tests {
                     positions: vec![SpecPosition { x: 1, y: 2 }, SpecPosition { x: 3, y: 0 }],
                 },
                 background_color: RgbColor::default(),
+                background_gradient: None,
                 frame: None,
             },
         )

@@ -105,6 +105,7 @@ fn render(paths: &[String], options: &AppOptions) -> Result<DynamicImage, AppErr
         &CompositionParams {
             layout,
             background_color: RgbColor::default(),
+            background_gradient: None,
             frame: None,
         },
     )

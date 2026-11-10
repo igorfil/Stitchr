@@ -1,6 +1,7 @@
 pub mod color;
 pub mod ffi;
 mod frame;
+mod gradient;
 mod layout;
 pub mod spec;
 
@@ -8,6 +9,7 @@ uniffi::setup_scaffolding!();
 
 pub use color::{ColorParseError, RgbColor};
 pub use frame::SpecFrame;
+pub use gradient::SpecGradient;
 pub use image::DynamicImage;
 pub use layout::{Alignment, ComposeError, ComposeOptions, Layout, StackDirection};
 pub use spec::{
@@ -135,12 +137,26 @@ pub fn render_plan(
     images: &[DynamicImage],
     plan: &PlacementPlan,
 ) -> Result<DynamicImage, ComposeError> {
-    render_plan_with(images, plan, |_, _| Ok(()))
+    render_plan_with(images, plan, None, |_, _| Ok(()))
+}
+
+fn new_background(
+    width: u32,
+    height: u32,
+    color: RgbColor,
+    gradient: Option<&SpecGradient>,
+) -> Result<RgbaImage, ComposeError> {
+    let mut canvas = new_canvas(width, height, color)?;
+    if let Some(gradient) = gradient {
+        gradient::paint(&mut canvas, gradient);
+    }
+    Ok(canvas)
 }
 
 fn render_plan_with(
     images: &[DynamicImage],
     plan: &PlacementPlan,
+    gradient: Option<&SpecGradient>,
     mut decorate: impl FnMut(&mut RgbaImage, usize) -> Result<(), ComposeError>,
 ) -> Result<DynamicImage, ComposeError> {
     if plan.positions.len() != images.len() {
@@ -149,7 +165,7 @@ fn render_plan_with(
             actual: images.len(),
         });
     }
-    let mut canvas = new_canvas(plan.width, plan.height, plan.background_color)?;
+    let mut canvas = new_background(plan.width, plan.height, plan.background_color, gradient)?;
     for (index, (image, &(x, y))) in images.iter().zip(&plan.positions).enumerate() {
         decorate(&mut canvas, index)?;
         imageops::overlay(&mut canvas, image, i64::from(x), i64::from(y));
@@ -174,7 +190,12 @@ fn render_framed_split(
         spec.height.saturating_sub(top.saturating_add(left)),
     );
     let split = render_split(images, size, divider, spec.background_color)?;
-    let mut canvas = new_canvas(spec.width, spec.height, spec.background_color)?;
+    let mut canvas = new_background(
+        spec.width,
+        spec.height,
+        spec.background_color,
+        spec.background_gradient.as_ref(),
+    )?;
     canvas
         .copy_from(&split.to_rgba8(), left, top)
         .map_err(|_| ComposeError::SizeOverflow)?;
@@ -220,9 +241,10 @@ pub fn render_spec(
         height: spec.height,
         background_color: spec.background_color,
     };
+    let gradient = spec.background_gradient.as_ref();
     match &spec.frame {
-        None => render_plan(images, &plan),
-        Some(frame) => render_plan_with(images, &plan, |canvas, index| {
+        None => render_plan_with(images, &plan, gradient, |_, _| Ok(())),
+        Some(frame) => render_plan_with(images, &plan, gradient, |canvas, index| {
             frame::draw_tile(
                 canvas,
                 frame,
@@ -335,6 +357,7 @@ mod tests {
             &CompositionParams {
                 layout,
                 background_color,
+                background_gradient: None,
                 frame: None,
             },
         )
@@ -657,6 +680,7 @@ mod tests {
                     alignment: Alignment::Start,
                 },
                 background_color: RgbColor::default(),
+                background_gradient: None,
                 frame: None,
             },
         )
@@ -901,6 +925,7 @@ mod tests {
                         alignment: Alignment::Start,
                     },
                     background_color: RgbColor::default(),
+                    background_gradient: None,
                     frame: None,
                 }
             )
@@ -1579,6 +1604,7 @@ mod tests {
                     alignment: Alignment::Start,
                 },
                 background_color: RgbColor::default(),
+                background_gradient: None,
                 frame: None,
             },
         )
@@ -1646,6 +1672,7 @@ mod tests {
                                 .collect(),
                         },
                         background_color: RgbColor::default(),
+                        background_gradient: None,
                         frame: None,
                     }
                 )
@@ -1720,6 +1747,7 @@ mod tests {
                         alignment: Alignment::Start,
                     },
                     background_color: RgbColor::default(),
+                    background_gradient: None,
                     frame: None,
                 }
             )
@@ -1736,6 +1764,7 @@ mod tests {
                         alignment: Alignment::Start,
                     },
                     background_color: RgbColor::default(),
+                    background_gradient: None,
                     frame: None,
                 }
             )
@@ -2486,6 +2515,7 @@ mod tests {
                 &CompositionParams {
                     layout: SpecLayout::Split { divider: 0 },
                     background_color: RgbColor::default(),
+                    background_gradient: None,
                     frame: None,
                 },
             )
@@ -2595,6 +2625,7 @@ mod tests {
             &CompositionParams {
                 layout,
                 background_color: RgbColor::default(),
+                background_gradient: None,
                 frame: Some(frame),
             },
         )
@@ -2692,6 +2723,7 @@ mod tests {
                 &CompositionParams {
                     layout: SpecLayout::Split { divider: 0 },
                     background_color: RgbColor::default(),
+                    background_gradient: None,
                     frame: Some(frame(&["A", "B"], 1, GREEN)),
                 },
             ),
@@ -2699,6 +2731,47 @@ mod tests {
                 expected: 1,
                 actual: 2
             })
+        );
+    }
+
+    #[test]
+    fn gradient_background_fills_spacing_but_split_dividers_stay_solid() {
+        let gradient = SpecGradient::Linear {
+            from: RgbColor {
+                red: 0,
+                green: 0,
+                blue: 0,
+            },
+            to: RgbColor {
+                red: 255,
+                green: 255,
+                blue: 255,
+            },
+            angle: 90,
+        };
+        let images = [solid(10, 10, RED), solid(10, 10, BLUE)];
+        let mut stacked = spec_for(
+            &images,
+            SpecLayout::Stack {
+                direction: StackDirection::Horizontal,
+                spacing: 10,
+                alignment: Alignment::Start,
+            },
+            RgbColor::default(),
+        );
+        stacked.background_gradient = Some(gradient);
+        let mut split = split_spec(&images, 4, RgbColor::default());
+        split.background_gradient = Some(gradient);
+
+        let stacked = render_spec(&stacked, &images).unwrap();
+        let split = render_spec(&split, &images).unwrap();
+
+        assert!(stacked.get_pixel(0, 0).0[0] < stacked.get_pixel(25, 0).0[0]);
+        assert!(stacked.get_pixel(25, 0).0[0] < stacked.get_pixel(49, 0).0[0]);
+        assert_eq!(count_color(&stacked, RED), 100);
+        assert_eq!(
+            count_color(&split, RED) + count_color(&split, BLUE) + count_color(&split, BLACK),
+            100
         );
     }
 }

@@ -80,7 +80,7 @@ pub fn label_warnings(spec: &CompositionSpec) -> Vec<LabelWarning> {
         .zip(widths)
         .enumerate()
         .flat_map(|(index, (label, extent))| {
-            let characters = frame::missing_glyphs(label);
+            let characters = frame::missing_glyphs(frame, label);
             let missing = (!characters.is_empty())
                 .then_some(LabelWarning::MissingGlyphs { index, characters });
             overflow(spec, index, label, extent)
@@ -116,6 +116,10 @@ mod tests {
             border_width: 2,
             border_color: RgbColor::default(),
             label_size: 20,
+            label_position: crate::LabelPosition::Inside,
+            label_color: None,
+            font: None,
+            font_data: None,
         }
     }
 

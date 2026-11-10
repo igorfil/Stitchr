@@ -39,7 +39,7 @@ The [examples](examples/README.md) show every option with its command and output
 | Spacing and alignment | `--spacing`, `--alignment`, `--divider` | [Spacing and alignment](examples/README.md#2-spacing-and-alignment) |
 | Backgrounds | `--background`, `--background-gradient`, `--gradient-kind`, `--gradient-angle` | [Backgrounds](examples/README.md#3-backgrounds) |
 | Resizing | `--fit-height`, `--fit-width`, `--fit cover\|contain`, `--max-width`, `--max-height` | [Agent guide](docs/agents.md#composition-rules) |
-| Borders and labels | `--label`, `--border-width`, `--border-color`, `--label-size` | [Borders and labels](examples/README.md#4-borders-and-labels) |
+| Borders and labels | `--label`, `--border-width`, `--border-color`, `--label-size`, `--label-position inside\|outside`, `--label-color`, `--font` | [Borders and labels](examples/README.md#4-borders-and-labels) |
 | Combined recipes | Single image with a title, before/after, labeled grid | [Putting it together](examples/README.md#5-putting-it-together) |
 | Output and inspection | `-o file.png\|.jpg\|-`, `--format`, `--jpeg-quality`, `--print-spec`, `--spec`, `--json` | [Output and inspection](examples/README.md#6-output-and-inspection) |
 

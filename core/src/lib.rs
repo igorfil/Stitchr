@@ -9,7 +9,7 @@ pub mod spec;
 pub use color::{ColorParseError, RgbColor};
 pub use diagnostics::{label_warnings, LabelWarning};
 pub use fit::{FitTarget, PlacementFit};
-pub use frame::SpecFrame;
+pub use frame::{read_font, LabelPosition, SpecFrame};
 pub use gradient::SpecGradient;
 pub use image::DynamicImage;
 pub use layout::{Alignment, ComposeError, ComposeOptions, Layout, StackDirection};
@@ -3078,6 +3078,10 @@ mod tests {
                 blue: border_color[2],
             },
             label_size: 12,
+            label_position: crate::LabelPosition::Inside,
+            label_color: None,
+            font: None,
+            font_data: None,
         }
     }
 
@@ -3105,6 +3109,227 @@ mod tests {
             },
         )
         .unwrap()
+    }
+
+    fn outside(frame: SpecFrame) -> SpecFrame {
+        SpecFrame {
+            label_position: LabelPosition::Outside,
+            ..frame
+        }
+    }
+
+    fn horizontal_stack() -> SpecLayout {
+        SpecLayout::Stack {
+            direction: StackDirection::Horizontal,
+            spacing: 0,
+            alignment: Alignment::Start,
+        }
+    }
+
+    fn header(frame: &SpecFrame) -> u32 {
+        let (_, top) = frame::inset(frame);
+        top - frame.border_width
+    }
+
+    #[test]
+    fn outside_labels_reserve_a_header_above_each_image() {
+        let images = [solid(60, 20, RED)];
+        let framed = outside(frame(&["Label"], 2, GREEN));
+        let header = header(&framed);
+        let spec = framed_spec(&images, horizontal_stack(), framed);
+
+        assert!(header > 0);
+        assert_eq!(
+            spec.images[0].position,
+            SpecPosition {
+                x: 2,
+                y: 2 + header
+            }
+        );
+        assert_eq!((spec.width, spec.height), (64, 24 + header));
+    }
+
+    #[test]
+    fn outside_labels_leave_the_image_uncovered() {
+        let images = [solid(60, 20, RED)];
+        let inside = framed_spec(&images, horizontal_stack(), frame(&["Label"], 2, GREEN));
+        let outside_spec = framed_spec(
+            &images,
+            horizontal_stack(),
+            outside(frame(&["Label"], 2, GREEN)),
+        );
+
+        let covered = render_spec(&inside, &images).unwrap();
+        let uncovered = render_spec(&outside_spec, &images).unwrap();
+        let image_origin = &outside_spec.images[0].position;
+
+        assert_ne!(covered.get_pixel(3, 3).0, RED);
+        assert!((0..60).all(|x| (0..20).all(|y| {
+            uncovered
+                .get_pixel(image_origin.x + x, image_origin.y + y)
+                .0
+                == RED
+        })));
+    }
+
+    #[test]
+    fn outside_labels_draw_the_tab_in_the_header_and_the_border_below_it() {
+        let images = [solid(60, 20, RED)];
+        let framed = outside(frame(&["Label"], 2, GREEN));
+        let header = header(&framed);
+        let spec = framed_spec(&images, horizontal_stack(), framed);
+
+        let result = render_spec(&spec, &images).unwrap();
+
+        assert_eq!(result.get_pixel(1, 0).0, GREEN);
+        assert_eq!(result.get_pixel(63, 0).0, BLACK);
+        assert_eq!(result.get_pixel(63, header).0, GREEN);
+        assert_eq!(result.get_pixel(63, spec.height - 1).0, GREEN);
+    }
+
+    #[test]
+    fn outside_empty_labels_keep_the_header_so_tiles_line_up() {
+        let images = [solid(10, 10, RED), solid(10, 10, BLUE)];
+        let framed = outside(frame(&["A", ""], 1, GREEN));
+        let spec = framed_spec(&images, horizontal_stack(), framed);
+
+        assert_eq!(spec.images[0].position.y, spec.images[1].position.y);
+    }
+
+    #[test]
+    fn outside_labels_on_a_split_sit_above_the_shared_border() {
+        let images = [solid(40, 20, RED), solid(40, 20, BLUE)];
+        let framed = outside(frame(&["A", "B"], 2, GREEN));
+        let header = header(&framed);
+        let spec = framed_spec(&images, SpecLayout::Split { divider: 0 }, framed);
+
+        assert_eq!((spec.width, spec.height), (44, 24 + header));
+        assert_eq!(validate_spec(&spec), Ok(()));
+        let result = render_spec(&spec, &images).unwrap();
+        assert_eq!(result.get_pixel(2, 2 + header).0, RED);
+        assert_eq!(result.get_pixel(41, header + 21).0, BLUE);
+        assert_eq!(result.get_pixel(0, header + 10).0, GREEN);
+    }
+
+    #[test]
+    fn label_color_overrides_the_automatic_contrast_color() {
+        let images = [solid(200, 40, RED)];
+        let colored = SpecFrame {
+            label_color: Some(RgbColor {
+                red: 255,
+                green: 255,
+                blue: 0,
+            }),
+            label_size: 30,
+            ..frame(&["WWW"], 2, BLACK)
+        };
+        let spec = framed_spec(&images, horizontal_stack(), colored);
+
+        let result = render_spec(&spec, &images).unwrap();
+
+        assert!(result.pixels().any(|(_, _, pixel)| pixel.0 == YELLOW));
+        let automatic = render_spec(
+            &framed_spec(
+                &images,
+                horizontal_stack(),
+                SpecFrame {
+                    label_size: 30,
+                    ..frame(&["WWW"], 2, BLACK)
+                },
+            ),
+            &images,
+        )
+        .unwrap();
+        assert!(automatic
+            .pixels()
+            .any(|(_, _, pixel)| pixel.0 == [255, 255, 255, 255]));
+        assert!(!automatic.pixels().any(|(_, _, pixel)| pixel.0 == YELLOW));
+    }
+
+    fn bundled_font_path() -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("fonts/Inter-SemiBold.ttf")
+    }
+
+    #[test]
+    fn read_font_accepts_a_truetype_file() {
+        let data = read_font(bundled_font_path()).unwrap();
+
+        assert!(!data.is_empty());
+    }
+
+    #[test]
+    fn read_font_rejects_missing_and_invalid_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let invalid = directory.path().join("font.ttf");
+        std::fs::write(&invalid, "not a font").unwrap();
+
+        assert!(read_font(directory.path().join("missing.ttf")).is_err());
+        assert!(read_font(&invalid).is_err());
+    }
+
+    #[test]
+    fn loaded_font_renders_like_the_bundled_one_when_it_is_the_same_file() {
+        let images = [solid(120, 30, RED)];
+        let bundled = framed_spec(&images, horizontal_stack(), frame(&["Same"], 2, GREEN));
+        let loaded = framed_spec(
+            &images,
+            horizontal_stack(),
+            SpecFrame {
+                font: Some("Inter-SemiBold.ttf".into()),
+                font_data: Some(read_font(bundled_font_path()).unwrap()),
+                ..frame(&["Same"], 2, GREEN)
+            },
+        );
+
+        assert_same_image(
+            &render_spec(&bundled, &images).unwrap(),
+            &render_spec(&loaded, &images).unwrap(),
+        );
+    }
+
+    #[test]
+    fn frame_serialization_omits_default_label_style() {
+        let value = serde_json::to_value(frame(&["A"], 1, GREEN)).unwrap();
+
+        assert!(value.get("label_position").is_none());
+        assert!(value.get("label_color").is_none());
+        assert!(value.get("font").is_none());
+        assert!(value.get("font_data").is_none());
+    }
+
+    #[test]
+    fn frame_serialization_records_custom_label_style() {
+        let styled = SpecFrame {
+            label_color: Some(RgbColor::default()),
+            font: Some("/fonts/a.ttf".into()),
+            ..outside(frame(&["A"], 1, GREEN))
+        };
+
+        let value = serde_json::to_value(&styled).unwrap();
+
+        assert_eq!(value["label_position"], "outside");
+        assert_eq!(
+            value["label_color"],
+            serde_json::json!({ "red": 0, "green": 0, "blue": 0 })
+        );
+        assert_eq!(value["font"], "/fonts/a.ttf");
+        assert_eq!(serde_json::from_value::<SpecFrame>(value).unwrap(), styled);
+    }
+
+    #[test]
+    fn frames_without_label_style_fields_deserialize_with_defaults() {
+        let value = serde_json::json!({
+            "labels": ["A"],
+            "border_width": 1,
+            "border_color": { "red": 0, "green": 0, "blue": 0 },
+            "label_size": 10
+        });
+
+        let parsed = serde_json::from_value::<SpecFrame>(value).unwrap();
+
+        assert_eq!(parsed.label_position, LabelPosition::Inside);
+        assert_eq!(parsed.label_color, None);
+        assert_eq!(parsed.font, None);
     }
 
     #[test]

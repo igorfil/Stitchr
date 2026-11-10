@@ -473,6 +473,10 @@ mod tests {
             border_width: 5,
             border_color: RgbColor::default(),
             label_size: 20,
+            label_position: crate::LabelPosition::Inside,
+            label_color: None,
+            font: None,
+            font_data: None,
         };
         let sizes = [(1000, 1000)];
         let (spec, _) =

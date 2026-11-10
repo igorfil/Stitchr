@@ -19,7 +19,7 @@ fn argument_schema(command: &Command, arg: &Arg) -> Value {
     let path = arg.get_value_hint() == ValueHint::AnyPath;
     let color = matches!(
         arg.get_id().as_str(),
-        "background_color" | "border_color" | "background_gradient"
+        "background_color" | "border_color" | "background_gradient" | "label_color"
     );
     let text = arg.get_id().as_str() == "label";
     let pixels_or_min = matches!(arg.get_id().as_str(), "fit_height" | "fit_width");

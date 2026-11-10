@@ -116,7 +116,7 @@ A request can succeed but probably not do what was intended. Renders and `--prin
 | --- | --- | --- |
 | `option_ignored` | `option` | An explicitly passed option has no effect, for example `--spacing` with `--layout split`, label styling without `--label`, `--gradient-angle` with a radial gradient, `--jpeg-quality` for PNG output, or output options with `--print-spec`. |
 | `label_overflow` | `index`, `label`, `tab_width`, `available_width` | A label tab is wider than its image (or split band) and extends past it. |
-| `missing_glyphs` | `index`, `label`, `characters` | The bundled font cannot draw these characters; they render as gaps. |
+| `missing_glyphs` | `index`, `label`, `characters` | The label font cannot draw these characters; they render as gaps. Pass `--font` with a font that covers them. |
 | `fit_not_applied` | `option`, `index`, `size`, `target` | An image is already smaller than the `--fit-height`/`--fit-width` target, so it is left unchanged. |
 
 ```json
@@ -206,6 +206,7 @@ Some engine-level codes are defensive and are not normally reachable through val
 - Inputs are local PNG, JPEG, WebP, or GIF paths, in paint order. The format is detected from file content, so the extension does not matter. Animated GIFs and WebPs use their first frame. Repeated paths are allowed. EXIF orientation is applied before planning.
 - `-` as an input reads one image from stdin (format detected from content); it may appear only once and is named `"-"` in the spec. Use `./-` for a file named `-`.
 - Images are never enlarged, and are only resized or cropped when asked. Output dimensions are derived from inputs and placement.
+- `--label TEXT` (once per input) adds a border and a label tab. The tab covers the image's top-left corner by default; `--label-position outside` puts it in a header strip above the image instead, so no content is hidden. `--label-color` overrides the automatic black/white text color, and `--font FILE` uses a TrueType/OpenType font instead of the bundled Inter SemiBold (for example for CJK labels). The spec records `label_position` and `label_color` when they are not the defaults, and `font` as an absolute path. An unreadable or invalid font is an `input_error` with `details.kind` `"font"`.
 - `--fit-height PIXELS|min` (or `--fit-width`) shrinks taller (wider) images to the target, keeping their aspect ratio; `min` matches the shortest (narrowest) input, which gives a stack equal heights (widths). Images already smaller stay as they are and produce a `fit_not_applied` warning. Not used by split.
 - `--fit cover|contain` lets split take inputs of different sizes: they are fitted into the smallest input width and height. `cover` scales and crops the overflow equally from both sides; `contain` scales to fit and pads with the background. The spec records it as each image's `fit`.
 - `--max-width`/`--max-height` shrink the images just enough that the whole output fits. Spacing, borders, and labels keep their pixel size, freeform positions scale with the images, and the spec reports the factor as `scale` when it is below 1. If spacing, borders, and labels alone exceed the limit, the request fails with `canvas_cannot_fit`. All resizing combines into one resample per image.

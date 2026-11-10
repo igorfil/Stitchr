@@ -2,8 +2,26 @@ use crate::{ComposeError, RgbColor};
 use ab_glyph::{point, Font, FontRef, Glyph, PxScale, ScaleFont};
 use image::{Rgba, RgbaImage};
 use serde::{Deserialize, Serialize};
+use std::{path::Path, sync::Arc};
 
 const FONT_DATA: &[u8] = include_bytes!("../fonts/Inter-SemiBold.ttf");
+
+/// Where a label tab sits relative to its image.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LabelPosition {
+    /// Over the image's top-left corner.
+    #[default]
+    Inside,
+    /// In a header strip above the image, so no content is covered.
+    Outside,
+}
+
+impl LabelPosition {
+    fn is_inside(&self) -> bool {
+        *self == Self::Inside
+    }
+}
 
 /// A border around every image, with an optional header tab holding each image's label.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -12,10 +30,34 @@ pub struct SpecFrame {
     pub border_width: u32,
     pub border_color: RgbColor,
     pub label_size: u32,
+    #[serde(default, skip_serializing_if = "LabelPosition::is_inside")]
+    pub label_position: LabelPosition,
+    /// Label text color; `None` picks black or white for contrast with the border.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_color: Option<RgbColor>,
+    /// Path of a TrueType/OpenType font file; `None` uses the bundled Inter SemiBold.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<String>,
+    /// The loaded `font` file; see [`read_font`].
+    #[serde(skip)]
+    pub font_data: Option<Arc<[u8]>>,
 }
 
-fn font() -> FontRef<'static> {
-    FontRef::try_from_slice(FONT_DATA).expect("bundled font is a valid TrueType file")
+/// Reads and checks a font file so it can be used as [`SpecFrame::font_data`].
+pub fn read_font(path: impl AsRef<Path>) -> Result<Arc<[u8]>, String> {
+    let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
+    FontRef::try_from_slice(&bytes).map_err(|error| error.to_string())?;
+    Ok(Arc::from(bytes))
+}
+
+fn font(frame: &SpecFrame) -> FontRef<'_> {
+    frame
+        .font_data
+        .as_deref()
+        .and_then(|data| FontRef::try_from_slice(data).ok())
+        .unwrap_or_else(|| {
+            FontRef::try_from_slice(FONT_DATA).expect("bundled font is a valid TrueType file")
+        })
 }
 
 fn scale(frame: &SpecFrame) -> PxScale {
@@ -31,7 +73,7 @@ fn padding_y(frame: &SpecFrame) -> u32 {
 }
 
 fn header_height(frame: &SpecFrame) -> u32 {
-    let font = font();
+    let font = font(frame);
     let scaled = font.as_scaled(scale(frame));
     (scaled.ascent() - scaled.descent()).ceil() as u32 + 2 * padding_y(frame)
 }
@@ -44,8 +86,9 @@ fn slant(frame: &SpecFrame) -> u32 {
     tab_height(frame) / 2
 }
 
-fn layout_text(text: &str, scale: PxScale, origin: (f32, f32)) -> (Vec<Glyph>, f32) {
-    let font = font();
+fn layout_text(frame: &SpecFrame, text: &str, origin: (f32, f32)) -> (Vec<Glyph>, f32) {
+    let font = font(frame);
+    let scale = scale(frame);
     let scaled = font.as_scaled(scale);
     let (glyphs, caret, _) = text.chars().fold(
         (Vec::new(), origin.0, None),
@@ -60,7 +103,7 @@ fn layout_text(text: &str, scale: PxScale, origin: (f32, f32)) -> (Vec<Glyph>, f
 }
 
 fn text_width(frame: &SpecFrame, text: &str) -> u32 {
-    layout_text(text, scale(frame), (0.0, 0.0)).1.ceil() as u32
+    layout_text(frame, text, (0.0, 0.0)).1.ceil() as u32
 }
 
 fn tab_bottom_width(frame: &SpecFrame, label: &str, left_inset: u32) -> u32 {
@@ -72,9 +115,9 @@ pub(crate) fn tab_top_width(frame: &SpecFrame, label: &str, left_inset: u32) -> 
     tab_bottom_width(frame, label, left_inset) + slant(frame)
 }
 
-/// Characters the bundled font cannot draw, in first-seen order without duplicates.
-pub(crate) fn missing_glyphs(text: &str) -> Vec<char> {
-    let font = font();
+/// Characters the frame's font cannot draw, in first-seen order without duplicates.
+pub(crate) fn missing_glyphs(frame: &SpecFrame, text: &str) -> Vec<char> {
+    let font = font(frame);
     text.chars()
         .filter(|&character| font.glyph_id(character).0 == 0)
         .fold(Vec::new(), |mut missing, character| {
@@ -85,9 +128,20 @@ pub(crate) fn missing_glyphs(text: &str) -> Vec<char> {
         })
 }
 
+/// Height reserved above the border for outside labels.
+fn outside_header(frame: &SpecFrame) -> u32 {
+    match frame.label_position {
+        LabelPosition::Inside => 0,
+        LabelPosition::Outside => header_height(frame),
+    }
+}
+
 /// Offset of an image's top-left corner from its tile's top-left corner.
 pub(crate) fn inset(frame: &SpecFrame) -> (u32, u32) {
-    (frame.border_width, frame.border_width)
+    (
+        frame.border_width,
+        frame.border_width.saturating_add(outside_header(frame)),
+    )
 }
 
 pub(crate) fn tile_size(
@@ -100,7 +154,11 @@ pub(crate) fn tile_size(
         .ok_or(ComposeError::SizeOverflow)?;
     width
         .checked_add(border)
-        .zip(height.checked_add(border))
+        .zip(
+            height
+                .checked_add(border)
+                .and_then(|height| height.checked_add(outside_header(frame))),
+        )
         .ok_or(ComposeError::SizeOverflow)
 }
 
@@ -151,9 +209,11 @@ fn text_color(background: RgbColor) -> RgbColor {
 }
 
 fn draw_text(canvas: &mut RgbaImage, frame: &SpecFrame, text: &str, origin: (f32, f32)) {
-    let font = font();
-    let color = text_color(frame.border_color);
-    let (glyphs, _) = layout_text(text, scale(frame), origin);
+    let font = font(frame);
+    let color = frame
+        .label_color
+        .unwrap_or_else(|| text_color(frame.border_color));
+    let (glyphs, _) = layout_text(frame, text, origin);
     glyphs
         .into_iter()
         .filter_map(|glyph| font.outline_glyph(glyph))
@@ -199,15 +259,19 @@ fn draw_tab(
             }
         });
     });
-    let font = font();
+    let font = font(frame);
     let ascent = font.as_scaled(scale(frame)).ascent();
+    let text_top = match frame.label_position {
+        LabelPosition::Inside => frame.border_width + padding_y(frame),
+        LabelPosition::Outside => padding_y(frame),
+    };
     draw_text(
         canvas,
         frame,
         label,
         (
             (x + i64::from(left_inset + padding_x(frame))) as f32,
-            (y + i64::from(frame.border_width + padding_y(frame))) as f32 + ascent,
+            (y + i64::from(text_top)) as f32 + ascent,
         ),
     );
 }
@@ -249,7 +313,14 @@ pub(crate) fn draw_tile(
         i64::from(image_position.0) - i64::from(left),
         i64::from(image_position.1) - i64::from(top),
     );
-    draw_border(canvas, frame, origin, tile_size(frame, image_size)?);
+    let header = outside_header(frame);
+    let (width, height) = tile_size(frame, image_size)?;
+    draw_border(
+        canvas,
+        frame,
+        (origin.0, origin.1 + i64::from(header)),
+        (width, height - header),
+    );
     if !label.is_empty() {
         draw_tab(canvas, frame, label, origin, frame.border_width);
     }
@@ -260,7 +331,13 @@ pub(crate) fn draw_tile(
 /// `band_starts[k]` is the x offset, within the split image, where band `k` begins on its top row.
 pub(crate) fn draw_split(canvas: &mut RgbaImage, frame: &SpecFrame, band_starts: &[u32]) {
     let (left, _) = inset(frame);
-    draw_border(canvas, frame, (0, 0), (canvas.width(), canvas.height()));
+    let header = outside_header(frame);
+    draw_border(
+        canvas,
+        frame,
+        (0, i64::from(header)),
+        (canvas.width(), canvas.height().saturating_sub(header)),
+    );
     frame
         .labels
         .iter()

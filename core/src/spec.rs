@@ -439,6 +439,10 @@ mod validation_tests {
             border_width: 3,
             border_color: RgbColor::default(),
             label_size: 20,
+            label_position: crate::LabelPosition::Inside,
+            label_color: None,
+            font: None,
+            font_data: None,
         }
     }
 

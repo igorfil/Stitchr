@@ -1,7 +1,8 @@
 use crate::{CliAlignment, CliGradientKind, CliLayout};
+use std::sync::Arc;
 use stitchr_core::{
     compose_spec, Alignment, ComposeError, CompositionParams, CompositionSpec, ImageMetadata,
-    RgbColor, SpecFrame, SpecGradient, SpecLayout, SpecPosition, StackDirection,
+    LabelPosition, RgbColor, SpecFrame, SpecGradient, SpecLayout, SpecPosition, StackDirection,
 };
 
 pub(crate) struct CliComposer;
@@ -21,6 +22,14 @@ pub(crate) struct CliComposeParams<'a> {
     pub background_gradient: &'a [RgbColor],
     pub gradient_kind: CliGradientKind,
     pub gradient_angle: u32,
+    pub label_position: LabelPosition,
+    pub label_color: Option<RgbColor>,
+    pub font: Option<&'a LoadedFont>,
+}
+
+pub(crate) struct LoadedFont {
+    pub path: String,
+    pub data: Arc<[u8]>,
 }
 
 impl CliComposer {
@@ -67,6 +76,10 @@ impl CliComposer {
             border_width: cli_params.border_width,
             border_color: cli_params.border_color,
             label_size: cli_params.label_size,
+            label_position: cli_params.label_position,
+            label_color: cli_params.label_color,
+            font: cli_params.font.map(|font| font.path.clone()),
+            font_data: cli_params.font.map(|font| font.data.clone()),
         });
         let background_gradient = match (cli_params.background_gradient, cli_params.gradient_kind) {
             (&[from, to], CliGradientKind::Linear) => Some(SpecGradient::Linear {
@@ -115,7 +128,7 @@ mod tests {
                 height: 2,
             })
             .collect::<Vec<_>>();
-        CliComposer::compose(&images, cli.compose_params()).unwrap()
+        CliComposer::compose(&images, cli.compose_params(None)).unwrap()
     }
 
     fn compose_args(args: &[&str]) -> CompositionSpec {
@@ -409,7 +422,7 @@ mod tests {
             },
         ];
 
-        let spec = CliComposer::compose(&images, cli.compose_params()).unwrap();
+        let spec = CliComposer::compose(&images, cli.compose_params(None)).unwrap();
 
         assert_eq!((spec.width, spec.height), (8, 5));
         assert_eq!(
@@ -459,7 +472,7 @@ mod tests {
             },
         ];
 
-        let spec = CliComposer::compose(&images, cli.compose_params()).unwrap();
+        let spec = CliComposer::compose(&images, cli.compose_params(None)).unwrap();
 
         assert_eq!(
             spec.images

@@ -7,7 +7,7 @@ mod spec_file;
 mod warnings;
 
 use clap::{parser::ValueSource, ArgAction, CommandFactory, FromArgMatches, Parser, ValueEnum};
-use composer::{CliComposeParams, CliComposer};
+use composer::{CliComposeParams, CliComposer, LoadedFont};
 use error::CliError;
 use io::is_stdio;
 use serde_json::{json, Value};
@@ -18,8 +18,9 @@ use std::{
     process::ExitCode,
 };
 use stitchr_core::{
-    fit, label_warnings, render_spec, ComposeError, CompositionSpec, DynamicImage, FitTarget,
-    ImageMetadata, LoadedImage, PlacementFit, RgbColor, DEFAULT_JPEG_QUALITY,
+    fit, label_warnings, read_font, render_spec, ComposeError, CompositionSpec, DynamicImage,
+    FitTarget, ImageMetadata, LabelPosition, LoadedImage, PlacementFit, RgbColor,
+    DEFAULT_JPEG_QUALITY,
 };
 use warnings::Warning;
 
@@ -37,6 +38,12 @@ enum CliFormat {
 enum SchemaFormat {
     Stitchr,
     Jsonschema,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum CliLabelPosition {
+    Inside,
+    Outside,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -165,6 +172,28 @@ struct Cli {
     #[arg(long, default_value_t = 20, allow_negative_numbers = true, value_parser = clap::value_parser!(u32).range(1..), value_name = "PIXELS", help = "Label font size (positive integer; only with --label)")]
     label_size: u32,
 
+    #[arg(
+        long,
+        value_enum,
+        default_value = "inside",
+        help = "Label tab placement: inside covers the image's top-left corner, outside adds a header strip above the image (only with --label)"
+    )]
+    label_position: CliLabelPosition,
+
+    #[arg(
+        long,
+        value_name = "COLOR",
+        help = "Label text color: RGB #RRGGBB, rgb(r,g,b), or common color name; default: black or white for contrast with --border-color (only with --label)"
+    )]
+    label_color: Option<RgbColor>,
+
+    #[arg(
+        long,
+        value_name = "FILE",
+        help = "TrueType/OpenType font file for labels, for example to draw scripts the bundled Inter font lacks (only with --label)"
+    )]
+    font: Option<PathBuf>,
+
     #[arg(long, value_name = "PIXELS|min", allow_negative_numbers = true, value_parser = fit_target, help = "Shrink taller images to this height, keeping aspect ratio; min matches the shortest input. Images are never enlarged (positive integer or min; not for split)")]
     fit_height: Option<FitTarget>,
 
@@ -263,7 +292,7 @@ impl Cli {
         }
     }
 
-    fn compose_params(&self) -> CliComposeParams<'_> {
+    fn compose_params<'a>(&'a self, font: Option<&'a LoadedFont>) -> CliComposeParams<'a> {
         CliComposeParams {
             layout: self.layout,
             columns: self.columns,
@@ -279,6 +308,12 @@ impl Cli {
             background_gradient: &self.background_gradient,
             gradient_kind: self.gradient_kind,
             gradient_angle: self.gradient_angle,
+            label_position: match self.label_position {
+                CliLabelPosition::Inside => LabelPosition::Inside,
+                CliLabelPosition::Outside => LabelPosition::Outside,
+            },
+            label_color: self.label_color,
+            font,
         }
     }
 }
@@ -396,6 +431,7 @@ fn fitted_sizes(cli: &Cli, metadata: &[ImageMetadata]) -> Vec<(u32, u32)> {
 
 fn compose_scaled(
     cli: &Cli,
+    font: Option<&LoadedFont>,
     metadata: &[ImageMetadata],
     sizes: &[(u32, u32)],
     scale: f64,
@@ -421,7 +457,7 @@ fn compose_scaled(
         &scaled,
         CliComposeParams {
             positions: &positions,
-            ..cli.compose_params()
+            ..cli.compose_params(font)
         },
     )
 }
@@ -430,9 +466,10 @@ fn request_from_arguments(cli: &Cli) -> Result<Request, CliError> {
     io::validate_stdin(&cli.images)?;
     let loaded = io::load_images(&cli.images)?;
     let metadata = metadata_of(&loaded);
+    let font = cli.font.as_deref().map(load_font).transpose()?;
     let sizes = fitted_sizes(cli, &metadata);
     let (mut spec, scale) = fit::fit_within((cli.max_width, cli.max_height), |scale| {
-        compose_scaled(cli, &metadata, &sizes, scale)
+        compose_scaled(cli, font.as_ref(), &metadata, &sizes, scale)
     })
     .map_err(|error| CliError::from(error).with_input_paths(&cli.images))?;
     let placement_fit = match (cli.layout, cli.fit) {
@@ -456,8 +493,28 @@ fn request_from_arguments(cli: &Cli) -> Result<Request, CliError> {
     })
 }
 
+fn load_font(path: &Path) -> Result<LoadedFont, CliError> {
+    read_font(path)
+        .map(|data| LoadedFont {
+            path: resolved_path(path),
+            data,
+        })
+        .map_err(|error| {
+            CliError::new(
+                "input_error",
+                format!("cannot load font {}: {error}", path.display()),
+            )
+            .with_details(json!({ "path": path.to_string_lossy(), "kind": "font" }))
+        })
+}
+
 fn request_from_spec(source: &Path) -> Result<Request, CliError> {
-    let spec = spec_file::read(source)?;
+    let mut spec = spec_file::read(source)?;
+    if let Some(frame) = spec.frame.as_mut() {
+        if let Some(path) = frame.font.clone() {
+            frame.font_data = Some(load_font(Path::new(&path))?.data);
+        }
+    }
     let inputs = spec_file::input_paths(&spec);
     io::validate_stdin(&inputs)?;
     let loaded = io::load_images(&inputs)?;
@@ -882,7 +939,7 @@ mod tests {
             .iter()
             .map(|image| image.metadata.clone())
             .collect::<Vec<_>>();
-        let spec = CliComposer::compose(&metadata, cli.compose_params()).unwrap();
+        let spec = CliComposer::compose(&metadata, cli.compose_params(None)).unwrap();
         let pixels = loaded
             .iter()
             .map(|image| image.image.clone())
@@ -1049,7 +1106,7 @@ mod tests {
                 width: 2,
                 height: 1,
             }],
-            cli.compose_params(),
+            cli.compose_params(None),
         )
         .unwrap();
 

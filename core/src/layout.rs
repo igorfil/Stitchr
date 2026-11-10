@@ -153,6 +153,17 @@ pub(crate) fn split_region(
     (!on_divider).then_some(band as usize)
 }
 
+/// Returns, per band, the first x on the top row that belongs to that band.
+pub(crate) fn band_starts(size: (u32, u32), count: usize, divider: u32) -> Vec<u32> {
+    (0..count)
+        .map(|band| {
+            (0..size.0)
+                .find(|&x| split_region((x, 0), size, count, divider) == Some(band))
+                .unwrap_or(0)
+        })
+        .collect()
+}
+
 /// Returns the fraction of pixel `(x, y)` covered by each visible image, using the same
 /// bands as [`split_region`]. Any remaining coverage belongs to the divider.
 pub(crate) fn split_coverage(

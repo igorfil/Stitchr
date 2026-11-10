@@ -67,8 +67,22 @@ fn tab_bottom_width(frame: &SpecFrame, label: &str, left_inset: u32) -> u32 {
     left_inset + 2 * padding_x(frame) + text_width(frame, label)
 }
 
-fn tab_top_width(frame: &SpecFrame, label: &str, left_inset: u32) -> u32 {
+/// Widest extent of a label tab, measured from the tile's left edge.
+pub(crate) fn tab_top_width(frame: &SpecFrame, label: &str, left_inset: u32) -> u32 {
     tab_bottom_width(frame, label, left_inset) + slant(frame)
+}
+
+/// Characters the bundled font cannot draw, in first-seen order without duplicates.
+pub(crate) fn missing_glyphs(text: &str) -> Vec<char> {
+    let font = font();
+    text.chars()
+        .filter(|&character| font.glyph_id(character).0 == 0)
+        .fold(Vec::new(), |mut missing, character| {
+            if !missing.contains(&character) {
+                missing.push(character);
+            }
+            missing
+        })
 }
 
 /// Offset of an image's top-left corner from its tile's top-left corner.

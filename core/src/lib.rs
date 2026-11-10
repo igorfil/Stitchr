@@ -1,10 +1,12 @@
 pub mod color;
+mod diagnostics;
 mod frame;
 mod gradient;
 mod layout;
 pub mod spec;
 
 pub use color::{ColorParseError, RgbColor};
+pub use diagnostics::{label_warnings, LabelWarning};
 pub use frame::SpecFrame;
 pub use gradient::SpecGradient;
 pub use image::DynamicImage;
@@ -217,13 +219,7 @@ fn render_framed_split(
     canvas
         .copy_from(&split.to_rgba8(), left, top)
         .map_err(|_| ComposeError::SizeOverflow)?;
-    let band_starts = (0..images.len())
-        .map(|band| {
-            (0..size.0)
-                .find(|&x| layout::split_region((x, 0), size, images.len(), divider) == Some(band))
-                .unwrap_or(0)
-        })
-        .collect::<Vec<_>>();
+    let band_starts = layout::band_starts(size, images.len(), divider);
     frame::draw_split(&mut canvas, frame, &band_starts);
     Ok(DynamicImage::ImageRgba8(canvas))
 }

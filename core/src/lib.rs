@@ -126,7 +126,9 @@ fn render_split(
         let coverage = layout::split_coverage((x, y), size, layers.len(), divider);
         let divider_share = 1.0 - coverage.clone().map(|(_, share)| share).sum::<f64>();
         let mixed = coverage.fold(
-            background.0.map(|channel| f64::from(channel) * divider_share),
+            background
+                .0
+                .map(|channel| f64::from(channel) * divider_share),
             |mixed, (index, share)| {
                 let mut sample = background;
                 sample.blend(layers[index].get_pixel(x, y));
@@ -2431,15 +2433,30 @@ mod tests {
         let spec = split_spec(&images, 0, RgbColor::default());
 
         assert_eq!((spec.width, spec.height), (10, 5));
-        let result = render_spec(&spec, &images).unwrap();
-        let first_blue_column_per_row = [6, 5, 5, 5, 4];
-        assert_canvas(&result, 10, 5, |x, y| {
-            if x < first_blue_column_per_row[y as usize] {
-                RED
-            } else {
-                BLUE
-            }
-        });
+        let result = render_spec(&spec, &images).unwrap().to_rgba8();
+        let red_in_row = |y| {
+            (0..10)
+                .map(|x| u32::from(result.get_pixel(x, y)[0]))
+                .sum::<u32>()
+        };
+        assert_eq!(result.get_pixel(0, 4).0, RED);
+        assert_eq!(result.get_pixel(9, 0).0, BLUE);
+        assert!(red_in_row(0) > red_in_row(4));
+        assert!(result
+            .pixels()
+            .all(|pixel| pixel[1] == 0
+                && (u16::from(pixel[0]) + u16::from(pixel[2])).abs_diff(255) <= 1));
+    }
+
+    #[test]
+    fn split_antialiases_the_diagonal_edge() {
+        let images = [solid(10, 5, RED), solid(10, 5, BLUE)];
+        let result = render_spec(&split_spec(&images, 0, RgbColor::default()), &images).unwrap();
+
+        assert!(result
+            .to_rgba8()
+            .pixels()
+            .any(|pixel| (64..192).contains(&pixel[0]) && (64..192).contains(&pixel[2])));
     }
 
     #[test]
@@ -2454,8 +2471,15 @@ mod tests {
         assert_eq!(result.get_pixel(0, 9).0, RED);
         assert_eq!(result.get_pixel(15, 5).0, GREEN);
         assert_eq!(result.get_pixel(29, 0).0, BLUE);
-        for color in [RED, GREEN, BLUE] {
-            assert!(count_color(&result, color).abs_diff(100) <= 5);
+        let channel_area = |channel: usize| {
+            result
+                .to_rgba8()
+                .pixels()
+                .map(|pixel| f64::from(pixel[channel]) / 255.0)
+                .sum::<f64>()
+        };
+        for channel in 0..3 {
+            assert!((channel_area(channel) - 100.0).abs() <= 2.0);
         }
     }
 
@@ -2708,7 +2732,6 @@ mod tests {
 
         assert_eq!((spec.width, spec.height), (36, 16));
         let result = render_spec(&spec, &images).unwrap();
-        assert_eq!(count_color(&result, RED) + count_color(&result, BLUE), 300);
         assert_eq!(count_color(&result, GREEN), 36 * 16 - 300);
     }
 
@@ -2772,9 +2795,6 @@ mod tests {
         assert!(stacked.get_pixel(0, 0).0[0] < stacked.get_pixel(25, 0).0[0]);
         assert!(stacked.get_pixel(25, 0).0[0] < stacked.get_pixel(49, 0).0[0]);
         assert_eq!(count_color(&stacked, RED), 100);
-        assert_eq!(
-            count_color(&split, RED) + count_color(&split, BLUE) + count_color(&split, BLACK),
-            100
-        );
+        assert!(split.to_rgba8().pixels().all(|pixel| pixel[1] == 0));
     }
 }

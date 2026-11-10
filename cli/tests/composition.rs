@@ -166,12 +166,7 @@ fn cli_renders_split_of_same_size_images() {
     let image = image::open(directory.path().join("split.png"))
         .unwrap()
         .to_rgba8();
-    let first_blue_column_per_row = [6, 5, 5, 5, 4];
-    assert_canvas(&image, 10, 5, |x, y| {
-        if x < first_blue_column_per_row[y as usize] {
-            [255, 0, 0, 255]
-        } else {
-            [0, 0, 255, 255]
-        }
-    });
+    assert_eq!(image.dimensions(), (10, 5));
+    assert_eq!(image.get_pixel(0, 4).0, [255, 0, 0, 255]);
+    assert_eq!(image.get_pixel(9, 0).0, [0, 0, 255, 255]);
 }

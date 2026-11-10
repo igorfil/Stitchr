@@ -233,3 +233,7 @@ stitchr --json docs/examples/light.png docs/examples/dark.png --layout horizonta
 ```
 
 Run `stitchr --help-json` to get the full list of options in machine-readable form. The [agent guide](../docs/agents.md) explains the JSON results and error codes.
+
+## Regenerating these images
+
+To regenerate every image on this page, run `examples/generate.sh` from the repository root (set `STITCHR` to use a specific binary, for example `STITCHR=target/release/stitchr`).

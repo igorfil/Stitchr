@@ -11,14 +11,15 @@ use composer::{CliComposeParams, CliComposer};
 use error::CliError;
 use io::is_stdio;
 use serde_json::{json, Value};
+use std::borrow::Cow;
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
     process::ExitCode,
 };
 use stitchr_core::{
-    label_warnings, render_spec, CompositionSpec, ImageMetadata, LoadedImage, RgbColor,
-    DEFAULT_JPEG_QUALITY,
+    fit, label_warnings, render_spec, ComposeError, CompositionSpec, DynamicImage, FitTarget,
+    ImageMetadata, LoadedImage, PlacementFit, RgbColor, DEFAULT_JPEG_QUALITY,
 };
 use warnings::Warning;
 
@@ -36,6 +37,12 @@ enum CliFormat {
 enum SchemaFormat {
     Stitchr,
     Jsonschema,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum CliFit {
+    Cover,
+    Contain,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -157,6 +164,26 @@ struct Cli {
 
     #[arg(long, default_value_t = 20, allow_negative_numbers = true, value_parser = clap::value_parser!(u32).range(1..), value_name = "PIXELS", help = "Label font size (positive integer; only with --label)")]
     label_size: u32,
+
+    #[arg(long, value_name = "PIXELS|min", allow_negative_numbers = true, value_parser = fit_target, help = "Shrink taller images to this height, keeping aspect ratio; min matches the shortest input. Images are never enlarged (positive integer or min; not for split)")]
+    fit_height: Option<FitTarget>,
+
+    #[arg(long, value_name = "PIXELS|min", allow_negative_numbers = true, value_parser = fit_target, help = "Shrink wider images to this width, keeping aspect ratio; min matches the narrowest input. Images are never enlarged (positive integer or min; not for split)")]
+    fit_width: Option<FitTarget>,
+
+    #[arg(
+        long,
+        value_enum,
+        value_name = "MODE",
+        help = "Fit split inputs of different sizes into the smallest input width and height: cover crops, contain pads (only for split)"
+    )]
+    fit: Option<CliFit>,
+
+    #[arg(long, allow_negative_numbers = true, value_parser = clap::value_parser!(u32).range(1..), value_name = "PIXELS", help = "Shrink the images so the whole output is at most this wide; spacing, borders, and labels keep their size (positive integer)")]
+    max_width: Option<u32>,
+
+    #[arg(long, allow_negative_numbers = true, value_parser = clap::value_parser!(u32).range(1..), value_name = "PIXELS", help = "Shrink the images so the whole output is at most this tall; spacing, borders, and labels keep their size (positive integer)")]
+    max_height: Option<u32>,
     #[arg(
         long,
         short,
@@ -213,6 +240,16 @@ fn non_negative(value: &str) -> Result<u32, String> {
             }
             _ => "must be an integer ≥ 0".to_owned(),
         })
+}
+
+fn fit_target(value: &str) -> Result<FitTarget, String> {
+    if value == "min" {
+        return Ok(FitTarget::Min);
+    }
+    match non_negative(value) {
+        Ok(0) | Err(_) => Err("must be a positive integer or min".to_owned()),
+        Ok(pixels) => Ok(FitTarget::Pixels(pixels)),
+    }
 }
 
 impl Cli {
@@ -317,10 +354,8 @@ fn collect_warnings(cli: &Cli, spec: &CompositionSpec, metadata: &[ImageMetadata
         .as_ref()
         .map_or(&[][..], |frame| frame.labels.as_slice());
     let mut collected = warnings::option_warnings(cli);
-    collected.extend(warnings::label_warnings(
-        &label_warnings(spec, metadata),
-        labels,
-    ));
+    collected.extend(warnings::fit_warnings(cli, metadata));
+    collected.extend(warnings::label_warnings(&label_warnings(spec), labels));
     collected
 }
 
@@ -329,6 +364,7 @@ struct Request {
     loaded: Vec<LoadedImage>,
     metadata: Vec<ImageMetadata>,
     spec: CompositionSpec,
+    scale: f64,
 }
 
 fn resolved_path(path: &Path) -> String {
@@ -345,21 +381,78 @@ fn metadata_of(loaded: &[LoadedImage]) -> Vec<ImageMetadata> {
     loaded.iter().map(|image| image.metadata.clone()).collect()
 }
 
+/// Sizes the images are drawn at before any `--max-width`/`--max-height` scaling.
+fn fitted_sizes(cli: &Cli, metadata: &[ImageMetadata]) -> Vec<(u32, u32)> {
+    let sizes = metadata
+        .iter()
+        .map(|image| (image.width, image.height))
+        .collect::<Vec<_>>();
+    match (cli.layout, cli.fit) {
+        (CliLayout::Split, Some(_)) => vec![fit::split_target(&sizes); sizes.len()],
+        (CliLayout::Split, None) => sizes,
+        _ => fit::fit_sizes(&sizes, cli.fit_height, cli.fit_width),
+    }
+}
+
+fn compose_scaled(
+    cli: &Cli,
+    metadata: &[ImageMetadata],
+    sizes: &[(u32, u32)],
+    scale: f64,
+) -> Result<CompositionSpec, ComposeError> {
+    let scaled = metadata
+        .iter()
+        .zip(sizes)
+        .map(|(image, &size)| {
+            let (width, height) = fit::scale_size(size, scale);
+            ImageMetadata {
+                name: image.name.clone(),
+                width,
+                height,
+            }
+        })
+        .collect::<Vec<_>>();
+    let positions = cli
+        .position
+        .iter()
+        .map(|&coordinate| (f64::from(coordinate) * scale).floor() as u32)
+        .collect::<Vec<_>>();
+    CliComposer::compose(
+        &scaled,
+        CliComposeParams {
+            positions: &positions,
+            ..cli.compose_params()
+        },
+    )
+}
+
 fn request_from_arguments(cli: &Cli) -> Result<Request, CliError> {
     io::validate_stdin(&cli.images)?;
     let loaded = io::load_images(&cli.images)?;
     let metadata = metadata_of(&loaded);
-    let mut spec = CliComposer::compose(&metadata, cli.compose_params())
-        .map_err(|error| CliError::from(error).with_input_paths(&cli.images))?;
+    let sizes = fitted_sizes(cli, &metadata);
+    let (mut spec, scale) = fit::fit_within((cli.max_width, cli.max_height), |scale| {
+        compose_scaled(cli, &metadata, &sizes, scale)
+    })
+    .map_err(|error| CliError::from(error).with_input_paths(&cli.images))?;
+    let placement_fit = match (cli.layout, cli.fit) {
+        (CliLayout::Split, Some(CliFit::Cover)) => Some(PlacementFit::Cover),
+        (CliLayout::Split, Some(CliFit::Contain)) => Some(PlacementFit::Contain),
+        _ => None,
+    };
     spec.images
         .iter_mut()
         .zip(&cli.images)
-        .for_each(|(placement, path)| placement.path = Some(resolved_path(path)));
+        .for_each(|(placement, path)| {
+            placement.path = Some(resolved_path(path));
+            placement.fit = placement_fit;
+        });
     Ok(Request {
         inputs: cli.images.clone(),
         loaded,
         metadata,
         spec,
+        scale,
     })
 }
 
@@ -375,7 +468,30 @@ fn request_from_spec(source: &Path) -> Result<Request, CliError> {
         loaded,
         metadata,
         spec,
+        scale: 1.0,
     })
+}
+
+/// Shrinks or fits each image to the size its placement expects.
+fn prepare_images(
+    loaded: Vec<LoadedImage>,
+    spec: &CompositionSpec,
+    inputs: &[PathBuf],
+) -> Result<Vec<DynamicImage>, CliError> {
+    loaded
+        .into_iter()
+        .zip(&spec.images)
+        .enumerate()
+        .map(|(index, (loaded, placement))| {
+            let image = loaded.image;
+            if (image.width(), image.height()) == (placement.width, placement.height) {
+                return Ok(image);
+            }
+            fit::prepare_image(index, &image, placement)
+                .map(Cow::into_owned)
+                .map_err(|error| CliError::from(error).with_input_paths(inputs))
+        })
+        .collect()
 }
 
 fn execute(cli: Cli) -> Result<Success, CliError> {
@@ -393,18 +509,15 @@ fn execute(cli: Cli) -> Result<Success, CliError> {
         return Err(CliError::strict(&warnings));
     }
     if cli.print_spec {
-        return Ok(Success::Spec {
-            spec: spec_json(&request.spec)?,
-            warnings,
-        });
+        let mut spec = spec_json(&request.spec)?;
+        if request.scale < 1.0 {
+            spec["scale"] = json!(request.scale);
+        }
+        return Ok(Success::Spec { spec, warnings });
     }
     io::validate_stdout(&cli.output, cli.format, cli.json)?;
     io::validate_destination(&cli.output, &request.inputs, cli.force, cli.no_clobber)?;
-    let images = request
-        .loaded
-        .into_iter()
-        .map(|loaded| loaded.image)
-        .collect::<Vec<_>>();
+    let images = prepare_images(request.loaded, &request.spec, &request.inputs)?;
     let composed = render_spec(&request.spec, &images)
         .map_err(|error| CliError::from(error).with_input_paths(&request.inputs))?;
     let result = io::export(cli.destination(), &composed)?;
@@ -1141,5 +1254,80 @@ mod tests {
 
         assert!(matches!(success, Success::Schema(_)));
         assert_eq!(success.warnings().len(), 0);
+    }
+
+    #[test]
+    fn fit_target_accepts_min_and_positive_pixels() {
+        assert_eq!(fit_target("min"), Ok(FitTarget::Min));
+        assert_eq!(fit_target("1"), Ok(FitTarget::Pixels(1)));
+        assert_eq!(fit_target("4096"), Ok(FitTarget::Pixels(4096)));
+    }
+
+    #[test]
+    fn fit_target_rejects_zero_negatives_and_words() {
+        for value in ["0", "-1", "MIN", "max", "", "1.5"] {
+            assert_eq!(
+                fit_target(value),
+                Err("must be a positive integer or min".to_owned()),
+                "{value:?}"
+            );
+        }
+    }
+
+    fn metadata(sizes: &[(u32, u32)]) -> Vec<ImageMetadata> {
+        sizes
+            .iter()
+            .map(|&(width, height)| ImageMetadata {
+                name: "image.png".into(),
+                width,
+                height,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn fitted_sizes_use_the_split_target_only_with_fit() {
+        let images = metadata(&[(40, 20), (30, 30)]);
+
+        assert_eq!(
+            fitted_sizes(
+                &parse_cli(args(&["a", "b", "--layout", "split", "--fit", "cover"])).unwrap(),
+                &images
+            ),
+            [(30, 20), (30, 20)]
+        );
+        assert_eq!(
+            fitted_sizes(
+                &parse_cli(args(&["a", "b", "--layout", "split"])).unwrap(),
+                &images
+            ),
+            [(40, 20), (30, 30)]
+        );
+    }
+
+    #[test]
+    fn fitted_sizes_ignore_fit_height_for_split() {
+        let images = metadata(&[(40, 20), (40, 20)]);
+
+        assert_eq!(
+            fitted_sizes(
+                &parse_cli(args(&["a", "b", "--layout", "split", "--fit-height", "10"])).unwrap(),
+                &images
+            ),
+            [(40, 20), (40, 20)]
+        );
+    }
+
+    #[test]
+    fn fitted_sizes_apply_fit_height_to_stacks() {
+        let images = metadata(&[(40, 20), (10, 10)]);
+
+        assert_eq!(
+            fitted_sizes(
+                &parse_cli(args(&["a", "b", "--fit-height", "min"])).unwrap(),
+                &images
+            ),
+            [(20, 10), (10, 10)]
+        );
     }
 }

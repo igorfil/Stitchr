@@ -22,9 +22,10 @@ fn argument_schema(command: &Command, arg: &Arg) -> Value {
         "background_color" | "border_color" | "background_gradient"
     );
     let text = arg.get_id().as_str() == "label";
+    let pixels_or_min = matches!(arg.get_id().as_str(), "fit_height" | "fit_width");
     let value_type = if boolean {
         "boolean"
-    } else if path || color || text || !choices.is_empty() {
+    } else if path || color || text || pixels_or_min || !choices.is_empty() {
         "string"
     } else {
         "integer"
@@ -62,7 +63,7 @@ fn argument_schema(command: &Command, arg: &Arg) -> Value {
         "aliases": arg.get_visible_aliases().unwrap_or_default().into_iter().map(|alias| format!("--{alias}")).collect::<Vec<_>>(),
         "kind": if arg.is_positional() { "positional" } else { "option" },
         "type": value_type,
-        "format": if path { Some("path") } else if color { Some("color") } else { None },
+        "format": if path { Some("path") } else if color { Some("color") } else if pixels_or_min { Some("pixels_or_min") } else { None },
         "enum": choices,
         "default": default,
         "default_missing_value": (arg.get_id() == "help_json").then_some(DEFAULT_SCHEMA_FORMAT),
@@ -148,6 +149,14 @@ pub(crate) fn schema() -> Value {
 }
 
 fn scalar_json_schema(argument: &Value) -> Value {
+    if argument["format"] == "pixels_or_min" {
+        return json!({
+            "anyOf": [
+                { "type": "integer", "minimum": argument["minimum"], "maximum": argument["maximum"] },
+                { "const": "min" }
+            ]
+        });
+    }
     let mut scalar = Map::new();
     scalar.insert("type".into(), argument["type"].clone());
     if let Some(choices) = argument["enum"]
@@ -411,6 +420,21 @@ mod tests {
             })
         );
         assert_eq!(property("label")["items"], json!({ "type": "string" }));
+    }
+
+    #[test]
+    fn fit_targets_accept_pixels_or_min() {
+        assert_eq!(argument("fit_height")["type"], "string");
+        assert_eq!(argument("fit_height")["format"], "pixels_or_min");
+        assert_eq!(
+            property("fit_width")["anyOf"],
+            json!([
+                { "type": "integer", "minimum": 1, "maximum": u32::MAX },
+                { "const": "min" }
+            ])
+        );
+        assert_eq!(property("fit")["enum"], json!(["cover", "contain"]));
+        assert_eq!(property("max_width")["minimum"], 1);
     }
 
     #[test]

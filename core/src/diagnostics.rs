@@ -1,4 +1,4 @@
-use crate::{frame, layout, CompositionSpec, ImageMetadata, SpecLayout};
+use crate::{frame, layout, CompositionSpec, SpecLayout};
 
 /// A composition that renders, but probably not as intended.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -13,7 +13,7 @@ pub enum LabelWarning {
     MissingGlyphs { index: usize, characters: Vec<char> },
 }
 
-fn available_widths(spec: &CompositionSpec, images: &[ImageMetadata]) -> Vec<(u32, u32)> {
+fn available_widths(spec: &CompositionSpec) -> Vec<(u32, u32)> {
     let Some(frame) = &spec.frame else {
         return Vec::new();
     };
@@ -40,7 +40,8 @@ fn available_widths(spec: &CompositionSpec, images: &[ImageMetadata]) -> Vec<(u3
                 })
                 .collect()
         }
-        _ => images
+        _ => spec
+            .images
             .iter()
             .map(|image| (0, image.width.saturating_add(left.saturating_mul(2))))
             .collect(),
@@ -68,13 +69,11 @@ fn overflow(
 }
 
 /// Reports labels that overflow their image or band and characters the font cannot draw.
-///
-/// `images` must be the metadata the spec was composed from, in the same order.
-pub fn label_warnings(spec: &CompositionSpec, images: &[ImageMetadata]) -> Vec<LabelWarning> {
+pub fn label_warnings(spec: &CompositionSpec) -> Vec<LabelWarning> {
     let Some(frame) = &spec.frame else {
         return Vec::new();
     };
-    let widths = available_widths(spec, images);
+    let widths = available_widths(spec);
     frame
         .labels
         .iter()
@@ -94,7 +93,10 @@ pub fn label_warnings(spec: &CompositionSpec, images: &[ImageMetadata]) -> Vec<L
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{compose_spec, Alignment, CompositionParams, RgbColor, SpecFrame, StackDirection};
+    use crate::{
+        compose_spec, Alignment, CompositionParams, ImageMetadata, RgbColor, SpecFrame,
+        StackDirection,
+    };
 
     fn metadata(sizes: &[(u32, u32)]) -> Vec<ImageMetadata> {
         sizes
@@ -129,7 +131,7 @@ mod tests {
             },
         )
         .unwrap();
-        label_warnings(&spec, &images)
+        label_warnings(&spec)
     }
 
     fn horizontal() -> SpecLayout {
@@ -154,7 +156,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(label_warnings(&spec, &images), []);
+        assert_eq!(label_warnings(&spec), []);
     }
 
     #[test]
@@ -270,6 +272,30 @@ mod tests {
     }
 
     #[test]
+    fn overflow_is_measured_against_the_drawn_size() {
+        let images = metadata(&[(400, 100)]);
+        let mut spec = compose_spec(
+            &images,
+            &CompositionParams {
+                layout: horizontal(),
+                background_color: RgbColor::default(),
+                background_gradient: None,
+                frame: Some(framed(&["Before"])),
+            },
+        )
+        .unwrap();
+        spec.images[0].width = 10;
+
+        assert!(matches!(
+            label_warnings(&spec)[..],
+            [LabelWarning::Overflow {
+                available_width: 14,
+                ..
+            }]
+        ));
+    }
+
+    #[test]
     fn split_band_widths_sum_to_the_canvas_width() {
         let images = metadata(&[(90, 30), (90, 30), (90, 30)]);
         let spec = compose_spec(
@@ -283,7 +309,7 @@ mod tests {
         )
         .unwrap();
 
-        let widths = available_widths(&spec, &images);
+        let widths = available_widths(&spec);
 
         assert_eq!(widths.first().unwrap().0, 0);
         assert_eq!(widths.last().unwrap().1, spec.width);

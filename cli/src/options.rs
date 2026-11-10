@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 /// When an option has an effect; outside these conditions an explicit value is ignored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Applies {
+    Always,
     Layouts(&'static [CliLayout]),
     Labels,
     Gradient,
@@ -22,6 +23,12 @@ pub(crate) struct OptionRule {
     pub max: Option<u64>,
 }
 
+const NOT_SPLIT: &[CliLayout] = &[
+    CliLayout::Grid,
+    CliLayout::Horizontal,
+    CliLayout::Vertical,
+    CliLayout::Freeform,
+];
 const STACKS_AND_GRID: &[CliLayout] =
     &[CliLayout::Grid, CliLayout::Horizontal, CliLayout::Vertical];
 const U32_MAX: u64 = u32::MAX as u64;
@@ -58,6 +65,11 @@ pub(crate) const RULES: &[OptionRule] = &[
     ranged("border_width", Applies::Labels, 0, U32_MAX),
     rule("border_color", Applies::Labels),
     ranged("label_size", Applies::Labels, 1, U32_MAX),
+    ranged("fit_height", Applies::Layouts(NOT_SPLIT), 1, U32_MAX),
+    ranged("fit_width", Applies::Layouts(NOT_SPLIT), 1, U32_MAX),
+    rule("fit", Applies::Layouts(&[CliLayout::Split])),
+    ranged("max_width", Applies::Always, 1, U32_MAX),
+    ranged("max_height", Applies::Always, 1, U32_MAX),
     rule("gradient_kind", Applies::Gradient),
     ranged("gradient_angle", Applies::LinearGradient, 0, 359),
     ranged("jpeg_quality", Applies::JpegOutput, 1, 100),
@@ -118,6 +130,7 @@ pub(crate) fn applicability(rule: Option<&OptionRule>) -> Value {
         return fields;
     };
     match rule.applies {
+        Applies::Always => {}
         Applies::Layouts(allowed) => fields["applies_to_layouts"] = json!(layouts(allowed)),
         Applies::Labels => fields["requires"] = json!(["--label"]),
         Applies::Gradient => fields["requires"] = json!(["--background-gradient"]),
@@ -170,6 +183,9 @@ mod tests {
             let parse = |value: u64| {
                 let value = value.to_string();
                 let mut args = vec!["stitchr", "a.png", long.as_str(), value.as_str()];
+                if rule.id.starts_with("fit_") && value == "0" {
+                    return false;
+                }
                 if rule.id == "position" {
                     args.push("0");
                 }

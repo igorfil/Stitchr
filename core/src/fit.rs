@@ -105,6 +105,26 @@ pub fn scale_length(length: u32, scale: f64) -> u32 {
     ((f64::from(length) * scale).floor() as u32).clamp(1, length.max(1))
 }
 
+/// Scales a size by `scale` in `(0, 1]`. The longer side rounds down and the shorter side
+/// follows it, so the aspect ratio is kept as closely as whole pixels allow.
+pub fn scale_size((width, height): (u32, u32), scale: f64) -> (u32, u32) {
+    let follow = |long: u32, short: u32| {
+        let scaled_long = scale_length(long, scale);
+        let ratio = Ratio {
+            num: u64::from(scaled_long),
+            den: u64::from(long.max(1)),
+        };
+        (scaled_long, ratio.apply(short).min(short.max(1)))
+    };
+    match width >= height {
+        true => follow(width, height),
+        false => {
+            let (scaled_height, scaled_width) = follow(height, width);
+            (scaled_width, scaled_height)
+        }
+    }
+}
+
 fn fits(spec: &CompositionSpec, bounds: (Option<u32>, Option<u32>)) -> bool {
     bounds.0.is_none_or(|width| spec.width <= width)
         && bounds.1.is_none_or(|height| spec.height <= height)
@@ -337,6 +357,29 @@ mod tests {
     }
 
     #[test]
+    fn scale_size_keeps_the_aspect_ratio() {
+        assert_eq!(scale_size((160, 80), 0.507), (81, 41));
+        assert_eq!(scale_size((80, 160), 0.507), (41, 81));
+        assert_eq!(scale_size((160, 80), 0.5), (80, 40));
+        assert_eq!(scale_size((1000, 1), 0.01), (10, 1));
+        assert_eq!(scale_size((3, 2), 1.0), (3, 2));
+        assert_eq!(scale_size((3, 2), 0.0), (1, 1));
+    }
+
+    #[test]
+    fn scale_size_never_shrinks_as_the_scale_grows() {
+        let size = (997, 389);
+        let scaled = (0..=1000)
+            .map(|step| scale_size(size, f64::from(step) / 1000.0))
+            .collect::<Vec<_>>();
+
+        assert!(scaled
+            .windows(2)
+            .all(|pair| pair[0].0 <= pair[1].0 && pair[0].1 <= pair[1].1));
+        assert_eq!(scaled.last(), Some(&size));
+    }
+
+    #[test]
     fn scale_positions_rounds_down() {
         assert_eq!(
             scale_positions(&[SpecPosition { x: 101, y: 3 }], 0.5),
@@ -352,10 +395,13 @@ mod tests {
         move |scale| {
             let images = sizes
                 .iter()
-                .map(|&(width, height)| ImageMetadata {
-                    name: "image".into(),
-                    width: scale_length(width, scale),
-                    height: scale_length(height, scale),
+                .map(|&size| {
+                    let (width, height) = scale_size(size, scale);
+                    ImageMetadata {
+                        name: "image".into(),
+                        width,
+                        height,
+                    }
                 })
                 .collect::<Vec<_>>();
             compose_spec(

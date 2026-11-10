@@ -30,7 +30,7 @@ Use the cookbook to select a layout. Resolve inputs to local files and put them 
 | Side-by-side comparison | `horizontal` | `--spacing`, `--alignment` |
 | Long vertical image | `vertical` | `--spacing`, `--alignment` |
 | Explicit placement or overlap | `freeform` | One `--position X Y` per input |
-| Diagonal comparison | `split` | Same-size inputs, optional `--divider` |
+| Diagonal comparison | `split` | Same-size inputs (or `--fit cover\|contain`), optional `--divider` |
 
 ### 3. Inspect the composition
 
@@ -117,6 +117,7 @@ A request can succeed but probably not do what was intended. Renders and `--prin
 | `option_ignored` | `option` | An explicitly passed option has no effect, for example `--spacing` with `--layout split`, label styling without `--label`, `--gradient-angle` with a radial gradient, `--jpeg-quality` for PNG output, or output options with `--print-spec`. |
 | `label_overflow` | `index`, `label`, `tab_width`, `available_width` | A label tab is wider than its image (or split band) and extends past it. |
 | `missing_glyphs` | `index`, `label`, `characters` | The bundled font cannot draw these characters; they render as gaps. |
+| `fit_not_applied` | `option`, `index`, `size`, `target` | An image is already smaller than the `--fit-height`/`--fit-width` target, so it is left unchanged. |
 
 ```json
 {"code": "option_ignored", "option": "--spacing", "reason": "--spacing is not used by the split layout"}
@@ -180,7 +181,7 @@ Many errors also carry an `error.details` object with machine-readable context. 
 | `output_conflicts_with_input` | The output is the same file as an input (including through symlinks or hard links). Choose another output, or pass `--force` to overwrite the input. |
 | `output_exists` | `--no-clobber` was given and the output already exists. Choose another output or drop `--no-clobber`. |
 | `freeform_position_count` | Supply exactly one `--position X Y` pair per input image. |
-| `split_size_mismatch` | Use identically sized inputs, or choose a grid/stack layout. Stitchr does not resize inputs for split mode. |
+| `split_size_mismatch` | Use identically sized inputs, pass `--fit cover` or `--fit contain`, or choose a grid/stack layout. |
 | `label_count_mismatch` | Supply exactly one `--label` per input image, or none. Use `--label ""` for a border without a label. |
 | `canvas_too_large` | Reduce spacing, coordinates, or input dimensions/count. The renderer also uses this code when canvas memory cannot be reserved. |
 | `canvas_cannot_fit` | `--max-width`/`--max-height` is smaller than the space taken by spacing, borders, and labels, even with images shrunk to one pixel. Raise the limit or reduce spacing. |
@@ -204,7 +205,10 @@ Some engine-level codes are defensive and are not normally reachable through val
 
 - Inputs are local PNG/JPEG paths, in paint order. The format is detected from file content, so the extension does not matter. Repeated paths are allowed. EXIF orientation is applied before planning.
 - `-` as an input reads one image from stdin (format detected from content); it may appear only once and is named `"-"` in the spec. Use `./-` for a file named `-`.
-- No automatic resizing or cropping occurs. Output dimensions are derived from inputs and placement.
+- Images are never enlarged, and are only resized or cropped when asked. Output dimensions are derived from inputs and placement.
+- `--fit-height PIXELS|min` (or `--fit-width`) shrinks taller (wider) images to the target, keeping their aspect ratio; `min` matches the shortest (narrowest) input, which gives a stack equal heights (widths). Images already smaller stay as they are and produce a `fit_not_applied` warning. Not used by split.
+- `--fit cover|contain` lets split take inputs of different sizes: they are fitted into the smallest input width and height. `cover` scales and crops the overflow equally from both sides; `contain` scales to fit and pads with the background. The spec records it as each image's `fit`.
+- `--max-width`/`--max-height` shrink the images just enough that the whole output fits. Spacing, borders, and labels keep their pixel size, freeform positions scale with the images, and the spec reports the factor as `scale` when it is below 1. If spacing, borders, and labels alone exceed the limit, the request fails with `canvas_cannot_fit`. All resizing combines into one resample per image.
 - Grid/stack spacing sets both gaps and equal outer margins. Grid columns default to `2`; spacing defaults to `0`; alignment defaults to `start`.
 - Alignment is within each grid cell or along a stack's cross-axis. Center alignment rounds offsets down to whole pixels.
 - Freeform coordinates are nonnegative top-left pixel positions. Later inputs paint over earlier ones. Spacing/alignment do not affect freeform or split mode.

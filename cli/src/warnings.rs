@@ -1,11 +1,11 @@
 use crate::{
     io,
     options::{value_name, Applies, RULES},
-    Cli, CliGradientKind,
+    Cli, CliGradientKind, CliLayout,
 };
 use clap::CommandFactory;
 use serde_json::{json, Value};
-use stitchr_core::{ExportFormat, LabelWarning};
+use stitchr_core::{ExportFormat, FitTarget, ImageMetadata, LabelWarning};
 
 pub(crate) const WARNING_CODES: &[(&str, &str)] = &[
     (
@@ -92,6 +92,11 @@ const COMPOSITION_OPTIONS: &[&str] = &[
     "border_width",
     "border_color",
     "label_size",
+    "fit_height",
+    "fit_width",
+    "fit",
+    "max_width",
+    "max_height",
 ];
 
 fn explicit(cli: &Cli, id: &str) -> bool {
@@ -130,6 +135,59 @@ pub(crate) fn option_warnings(cli: &Cli) -> Vec<Warning> {
                 })
             }),
     );
+    warnings
+}
+
+fn fit_warning(
+    option: &str,
+    target: Option<FitTarget>,
+    dimension: &str,
+    length: impl Fn(&ImageMetadata) -> u32,
+    metadata: &[ImageMetadata],
+) -> Vec<Warning> {
+    let Some(FitTarget::Pixels(target)) = target else {
+        return Vec::new();
+    };
+    metadata
+        .iter()
+        .enumerate()
+        .filter(|(_, image)| length(image) < target)
+        .map(|(index, image)| Warning {
+            code: "fit_not_applied",
+            reason: format!(
+                "{option} {target} does not apply to image {index} ({} is {} px {dimension}); images are never enlarged",
+                image.name,
+                length(image)
+            ),
+            context: json!({
+                "option": option,
+                "index": index,
+                "size": length(image),
+                "target": target
+            }),
+        })
+        .collect()
+}
+
+/// Images that `--fit-height`/`--fit-width` leave unchanged because they are already smaller.
+pub(crate) fn fit_warnings(cli: &Cli, metadata: &[ImageMetadata]) -> Vec<Warning> {
+    if cli.spec.is_some() || cli.layout == CliLayout::Split {
+        return Vec::new();
+    }
+    let mut warnings = fit_warning(
+        "--fit-height",
+        cli.fit_height,
+        "tall",
+        |image| image.height,
+        metadata,
+    );
+    warnings.extend(fit_warning(
+        "--fit-width",
+        cli.fit_width,
+        "wide",
+        |image| image.width,
+        metadata,
+    ));
     warnings
 }
 
@@ -580,6 +638,130 @@ mod tests {
         assert_eq!(
             options(&["--spec", "s.json", "-o", "out.jpg", "--mkdir"]),
             Vec::<String>::new()
+        );
+    }
+
+    fn image(name: &str, width: u32, height: u32) -> ImageMetadata {
+        ImageMetadata {
+            name: name.into(),
+            width,
+            height,
+        }
+    }
+
+    #[test]
+    fn fit_options_apply_outside_split() {
+        assert_eq!(
+            options(&[
+                "a.png",
+                "--layout",
+                "horizontal",
+                "--fit-height",
+                "min",
+                "--fit-width",
+                "9"
+            ]),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            options(&["a.png", "--layout", "split", "--fit-height", "min"]),
+            ["--fit-height"]
+        );
+    }
+
+    #[test]
+    fn split_fit_mode_only_applies_to_split() {
+        assert_eq!(
+            ignored(&["a.png", "--fit", "cover"]),
+            [(
+                "--fit".to_owned(),
+                "--fit is not used by the grid layout".to_owned()
+            )]
+        );
+        assert_eq!(
+            options(&["a.png", "--layout", "split", "--fit", "contain"]),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn max_size_options_always_apply() {
+        assert_eq!(
+            options(&[
+                "a.png",
+                "--layout",
+                "split",
+                "--max-width",
+                "10",
+                "--max-height",
+                "10"
+            ]),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn fit_options_are_ignored_with_a_spec_file() {
+        assert_eq!(
+            options(&["--spec", "s.json", "--fit-height", "10", "--max-width", "5"]),
+            ["--fit-height", "--max-width"]
+        );
+    }
+
+    #[test]
+    fn fit_height_reports_images_already_shorter_than_the_target() {
+        let cli = cli(&[
+            "a.png",
+            "b.png",
+            "--layout",
+            "horizontal",
+            "--fit-height",
+            "400",
+        ]);
+        let warnings = fit_warnings(&cli, &[image("a.png", 800, 600), image("b.png", 500, 300)]);
+
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(
+            warnings[0].json(),
+            json!({
+                "code": "fit_not_applied",
+                "option": "--fit-height",
+                "index": 1,
+                "size": 300,
+                "target": 400,
+                "reason": "--fit-height 400 does not apply to image 1 (b.png is 300 px tall); images are never enlarged"
+            })
+        );
+    }
+
+    #[test]
+    fn fit_width_reports_narrower_images() {
+        let cli = cli(&["a.png", "--layout", "vertical", "--fit-width", "100"]);
+        let warnings = fit_warnings(&cli, &[image("a.png", 99, 600)]);
+
+        assert_eq!(warnings[0].context["option"], "--fit-width");
+        assert_eq!(warnings[0].context["size"], 99);
+    }
+
+    #[test]
+    fn fit_min_and_exact_matches_never_warn() {
+        let images = [image("a.png", 100, 100), image("b.png", 50, 50)];
+
+        assert!(fit_warnings(&cli(&["a.png", "b.png", "--fit-height", "min"]), &images).is_empty());
+        assert!(fit_warnings(&cli(&["a.png", "b.png", "--fit-height", "50"]), &images).is_empty());
+    }
+
+    #[test]
+    fn fit_warnings_are_skipped_where_fit_options_are_ignored() {
+        let images = [image("a.png", 10, 10)];
+
+        assert!(fit_warnings(
+            &cli(&["a.png", "--layout", "split", "--fit-height", "50"]),
+            &images
+        )
+        .is_empty());
+        assert!(
+            fit_warnings(&cli(&["--spec", "s.json", "--fit-height", "50"]), &images).is_empty()
         );
     }
 

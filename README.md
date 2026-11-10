@@ -38,6 +38,7 @@ The [examples](examples/README.md) show every option with its command and output
 | Layouts | `--layout grid\|horizontal\|vertical\|freeform\|split`, `--columns`, `--position` | [Layouts](examples/README.md#1-layouts) |
 | Spacing and alignment | `--spacing`, `--alignment`, `--divider` | [Spacing and alignment](examples/README.md#2-spacing-and-alignment) |
 | Backgrounds | `--background`, `--background-gradient`, `--gradient-kind`, `--gradient-angle` | [Backgrounds](examples/README.md#3-backgrounds) |
+| Resizing | `--fit-height`, `--fit-width`, `--fit cover\|contain`, `--max-width`, `--max-height` | [Agent guide](docs/agents.md#composition-rules) |
 | Borders and labels | `--label`, `--border-width`, `--border-color`, `--label-size` | [Borders and labels](examples/README.md#4-borders-and-labels) |
 | Combined recipes | Single image with a title, before/after, labeled grid | [Putting it together](examples/README.md#5-putting-it-together) |
 | Output and inspection | `-o file.png\|.jpg\|-`, `--format`, `--jpeg-quality`, `--print-spec`, `--spec`, `--json` | [Output and inspection](examples/README.md#6-output-and-inspection) |
@@ -64,7 +65,7 @@ Errors use `{"schema_version":1,"ok":false,"error":{"code":"...","message":"..."
 - The output extension selects PNG (`.png`) or JPEG (`.jpg`, `.jpeg`). `--format png|jpeg` overrides the extension. Existing output files are overwritten, but Stitchr refuses to overwrite one of its inputs unless you pass `--force`. Use `--no-clobber` to never overwrite, and `--mkdir` to create missing parent directories.
 - `--jpeg-quality` sets JPEG quality from 1 to 100 (default 75). It is ignored for PNG.
 - Use `-` as an input to read one image from stdin, and `-o -` with `--format` to write the image to stdout: `cat a.png | stitchr - b.png -o - --format png > out.png`. `-o -` cannot be combined with `--json`. Use `./-` for a file literally named `-`.
-- Images keep their original pixel dimensions, after applying EXIF orientation.
+- Images keep their original pixel dimensions, after applying EXIF orientation, unless you pass a fit option. Images are only ever shrunk: `--fit-height min` gives a horizontal stack equal heights, and `--max-width 1200` shrinks the images so the whole output fits while spacing, borders, and labels keep their size.
 - Colors accept names, `'#RRGGBB'`, and `'rgb(r,g,b)'`; quote colors containing shell metacharacters.
 - Output is opaque: transparent input pixels blend onto the selected background.
 - The canvas buffer is limited to 512 MiB; oversized compositions return an error. Input images and intermediate buffers require additional memory.

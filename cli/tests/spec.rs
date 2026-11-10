@@ -212,7 +212,7 @@ fn changed_input_size_is_reported() {
     let directory = fixtures();
     let spec = printed_spec(&directory, &[]);
     write_spec(&directory, &spec);
-    RgbImage::new(9, 9)
+    RgbImage::new(1, 9)
         .save(directory.path().join("blue.png"))
         .unwrap();
 
@@ -225,7 +225,7 @@ fn changed_input_size_is_reported() {
     let value = json_of(&output);
     assert_eq!(value["error"]["code"], "image_size_mismatch");
     assert_eq!(value["error"]["details"]["index"], 1);
-    assert_eq!(value["error"]["details"]["width"], 9);
+    assert_eq!(value["error"]["details"]["width"], 1);
     assert!(!directory.path().join("out.png").exists());
 }
 
@@ -294,5 +294,56 @@ fn spec_inputs_cannot_overwrite_themselves_without_force() {
     assert_eq!(
         json_of(&output)["error"]["code"],
         "output_conflicts_with_input"
+    );
+}
+
+#[test]
+fn larger_input_is_shrunk_to_its_placement() {
+    let directory = fixtures();
+    write_spec(
+        &directory,
+        &printed_spec(&directory, &["--layout", "horizontal"]),
+    );
+    RgbImage::from_pixel(20, 30, Rgb([0, 0, 255]))
+        .save(directory.path().join("blue.png"))
+        .unwrap();
+
+    let output = run(
+        &directory,
+        &["--json", "--spec", "spec.json", "-o", "out.png"],
+    );
+
+    assert_eq!(json_of(&output)["width"], 6);
+    let image = pixels(&directory, "out.png");
+    assert_eq!(image.dimensions(), (6, 3));
+    assert_eq!(image.get_pixel(5, 1).0, [0, 0, 255, 255]);
+}
+
+#[test]
+fn fitted_spec_round_trips() {
+    let directory = fixtures();
+    let args = [
+        "--layout",
+        "horizontal",
+        "--fit-height",
+        "2",
+        "--max-width",
+        "5",
+    ];
+    let spec = printed_spec(&directory, &args);
+    write_spec(&directory, &spec);
+    let mut direct = vec!["red.png", "blue.png", "-o", "direct.png"];
+    direct.extend_from_slice(&args);
+    assert_eq!(run(&directory, &direct).status.code(), Some(0));
+
+    assert_eq!(
+        run(&directory, &["--spec", "spec.json", "-o", "from-spec.png"])
+            .status
+            .code(),
+        Some(0)
+    );
+    assert_eq!(
+        pixels(&directory, "from-spec.png"),
+        pixels(&directory, "direct.png")
     );
 }

@@ -4,7 +4,7 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
 };
-use stitchr_core::{validate_spec, ComposeError, CompositionSpec, ImageMetadata};
+use stitchr_core::{fit::check_source_size, validate_spec, CompositionSpec, ImageMetadata};
 
 fn invalid_spec(message: impl Into<String>, details: Value) -> CliError {
     CliError::new("invalid_spec", message).with_details(details)
@@ -87,7 +87,7 @@ pub(crate) fn input_paths(spec: &CompositionSpec) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Fails when a loaded input does not have the size its placement expects.
+/// Fails when a loaded input would have to be enlarged to the size its placement expects.
 pub(crate) fn check_sizes(
     spec: &CompositionSpec,
     metadata: &[ImageMetadata],
@@ -96,17 +96,10 @@ pub(crate) fn check_sizes(
         .iter()
         .zip(metadata)
         .enumerate()
-        .find(|(_, (placement, image))| {
-            (placement.width, placement.height) != (image.width, image.height)
+        .try_for_each(|(index, (placement, image))| {
+            check_source_size(index, placement, (image.width, image.height))
         })
-        .map_or(Ok(()), |(index, (placement, image))| {
-            Err(CliError::from(ComposeError::ImageSizeMismatch {
-                index,
-                expected: (placement.width, placement.height),
-                actual: (image.width, image.height),
-            })
-            .with_input_paths(&input_paths(spec)))
-        })
+        .map_err(|error| CliError::from(error).with_input_paths(&input_paths(spec)))
 }
 
 #[cfg(test)]
@@ -246,11 +239,23 @@ mod tests {
     }
 
     #[test]
-    fn changed_input_fails_the_size_check_with_details() {
+    fn larger_input_passes_the_size_check_because_it_can_shrink() {
         let spec = parse(&spec_text(json!([image("a.png")])), file()).unwrap();
         let metadata = [ImageMetadata {
             name: "a.png".into(),
             width: 5,
+            height: 2,
+        }];
+
+        assert!(check_sizes(&spec, &metadata).is_ok());
+    }
+
+    #[test]
+    fn smaller_input_fails_the_size_check_with_details() {
+        let spec = parse(&spec_text(json!([image("a.png")])), file()).unwrap();
+        let metadata = [ImageMetadata {
+            name: "a.png".into(),
+            width: 1,
             height: 2,
         }];
         let error = check_sizes(&spec, &metadata).unwrap_err();
@@ -259,7 +264,7 @@ mod tests {
         assert_eq!(
             error.details(),
             Some(&json!({
-                "index": 0, "path": "a.png", "width": 5, "height": 2,
+                "index": 0, "path": "a.png", "width": 1, "height": 2,
                 "expected": { "width": 2, "height": 2 }
             }))
         );

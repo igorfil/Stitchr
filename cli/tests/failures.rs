@@ -57,9 +57,12 @@ fn unsupported_output_extension_is_rejected() {
     let directory = tempfile::tempdir().unwrap();
     write_input(&directory);
 
-    let result = run_cli(&directory, &["input.png", "--output", "output.webp"]);
+    let result = run_cli(&directory, &["input.png", "--output", "output.bmp"]);
 
-    assert_failure_contains(&result, "output filename must end in .png, .jpg, or .jpeg");
+    assert_failure_contains(
+        &result,
+        "output filename must end in .png, .jpg, .jpeg, or .webp",
+    );
 }
 
 #[test]

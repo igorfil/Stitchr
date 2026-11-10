@@ -1,6 +1,6 @@
 # Using Stitchr from an agent
 
-Stitchr composes local PNG, JPEG, WebP, and GIF files into a PNG or JPEG image without network access or an interactive session. Pass arguments as an array and use `--json` for a machine-readable result.
+Stitchr composes local PNG, JPEG, WebP, and GIF files into a PNG, JPEG, or WebP image without network access or an interactive session. Pass arguments as an array and use `--json` for a machine-readable result.
 
 - [Runnable cookbook](examples/README.md)
 - [Machine-readable cookbook](examples/cases.json)
@@ -102,7 +102,7 @@ Successful response fields depend on the operation:
 
 | Operation | Additional fields |
 | --- | --- |
-| Render | `output` (string), `output_abs` (string or `null`), `width` and `height` (integers), `format` (`"png"` or `"jpeg"`), `scale` (number, below 1 when `--max-width`/`--max-height` shrank the images), `warnings` (array) |
+| Render | `output` (string), `output_abs` (string or `null`), `width` and `height` (integers), `format` (`"png"`, `"jpeg"`, or `"webp"`), `scale` (number, below 1 when `--max-width`/`--max-height` shrank the images), `warnings` (array) |
 | `--print-spec` | `spec` (object), `warnings` (array) |
 | `--help-json` / `--schema` | `schema` (object) |
 | `--help` / `-h` | `help` (string) |
@@ -180,7 +180,7 @@ Many errors also carry an `error.details` object with machine-readable context. 
 | --- | --- |
 | `invalid_arguments` | Missing inputs, unknown flags, invalid enum/color/numeric values, wrong argument arity, or a repeated single-use option such as `--background-gradient`. Also: `-` used as an input more than once, `-o -` with `--json`, `-o -` without `--format`, or any warning under `--strict`. Inspect the schema and correct the arguments. |
 | `input_error` | Input is missing, unreadable, corrupt, or unsupported. Check its path (or stdin bytes for `-`) and that it is a PNG, JPEG, WebP, or GIF image. |
-| `unsupported_output_format` | Choose an output ending in `.png`, `.jpg`, or `.jpeg`, or pass `--format png\|jpeg`. |
+| `unsupported_output_format` | Choose an output ending in `.png`, `.jpg`, `.jpeg`, or `.webp`, or pass `--format png\|jpeg\|webp`. |
 | `output_error` | Check the destination directory, permissions, available space, and whether the destination is a directory. Pass `--mkdir` to create missing parent directories. |
 | `output_conflicts_with_input` | The output is the same file as an input (including through symlinks or hard links). Choose another output, or pass `--force` to overwrite the input. |
 | `output_exists` | `--no-clobber` was given and the output already exists. Choose another output or drop `--no-clobber`. |
@@ -221,9 +221,9 @@ Some engine-level codes are defensive and are not normally reachable through val
 - Background defaults to black. All outputs are opaque; input alpha blends onto the background. JPEG is lossy.
 - Coordinates, spacing, divider, and columns are unsigned 32-bit integers; columns must be at least `1`. Large valid integers can still exceed composition limits.
 - The RGBA canvas buffer is limited to 512 MiB. Input decoding and intermediate buffers use additional memory.
-- Output defaults to `stitched.png`. The extension controls format, case-insensitively, unless `--format png|jpeg` (alias `jpg`) overrides it. Existing files are overwritten without a prompt, except that an output naming one of the inputs is refused unless `--force` is given. `--no-clobber` refuses any existing output file. Parent directories must already exist unless `--mkdir` is given. Spec inspection does not check the destination.
+- Output defaults to `stitched.png`. The extension controls format, case-insensitively, unless `--format png|jpeg|webp` (alias `jpg`) overrides it. WebP output is lossless. Existing files are overwritten without a prompt, except that an output naming one of the inputs is refused unless `--force` is given. `--no-clobber` refuses any existing output file. Parent directories must already exist unless `--mkdir` is given. Spec inspection does not check the destination.
 - `-o -` writes only the encoded image bytes to stdout and requires `--format`. It cannot be combined with `--json`, since stdout would no longer be a single JSON object; errors still go to stderr.
-- `--jpeg-quality` is an integer from `1` to `100`, default `75`. It applies only to JPEG output and is ignored for PNG. Values outside the range are `invalid_arguments` errors.
+- `--jpeg-quality` is an integer from `1` to `100`, default `75`. It applies only to JPEG output and is ignored for PNG and WebP. Values outside the range are `invalid_arguments` errors.
 
 ## Invoke without a shell
 

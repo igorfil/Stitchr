@@ -8,7 +8,7 @@ use stitchr_core::ComposeError;
 pub(crate) const ERROR_CODES: &[(&str, &str)] = &[
     ("invalid_arguments", "Arguments could not be parsed or validated, or a warning occurred under --strict. Inspect the schema and correct the arguments."),
     ("input_error", "An input is missing, unreadable, corrupt, or unsupported."),
-    ("unsupported_output_format", "The output must end in .png, .jpg, or .jpeg, or --format must be given."),
+    ("unsupported_output_format", "The output must end in .png, .jpg, .jpeg, or .webp, or --format must be given."),
     ("output_error", "The output could not be written. Check the directory, permissions, and space, or pass --mkdir."),
     ("output_conflicts_with_input", "The output is one of the inputs. Choose another output or pass --force."),
     ("output_exists", "The output exists and --no-clobber was given."),

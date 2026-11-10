@@ -32,6 +32,7 @@ enum CliFormat {
     Png,
     #[value(alias = "jpg")]
     Jpeg,
+    Webp,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -78,7 +79,7 @@ enum CliGradientKind {
 #[command(
     name = "stitchr",
     version,
-    about = "Combine PNG, JPEG, WebP, and GIF images into one PNG or JPEG image",
+    about = "Combine PNG, JPEG, WebP, and GIF images into one PNG, JPEG, or WebP image",
     long_about = "Arrange PNG, JPEG, WebP, or GIF images in a grid, horizontal or vertical stack, at explicit freeform positions, or as diagonal split slices of same-size images. Output format is selected by the output file extension.",
     after_help = "Examples:\n  stitchr img1.png img2.png --layout grid --spacing 10\n  stitchr img1.png img2.jpg --layout horizontal --alignment center -o combined.jpg\n  stitchr img1.png img2.png --layout freeform --position 0 0 --position 300 80 -o combined.png\n  stitchr light.png dark.png --layout split --divider 4 --background white -o split.png\n  stitchr before.png after.png --layout horizontal --spacing 16 --background white --label Before --label After -o labeled.png\n  stitchr img1.png img2.png --spacing 40 --background-gradient '#ff7e5f' '#feb47b' --gradient-angle 135 -o gradient.png\n  stitchr img1.png img2.png --background rebeccapurple --print-spec"
 )]
@@ -218,7 +219,7 @@ struct Cli {
         short,
         default_value = "stitched.png",
         value_name = "FILE",
-        help = "Output file (.png, .jpg, or .jpeg; default: stitched.png), or - for stdout (requires --format; not with --json)"
+        help = "Output file (.png, .jpg, .jpeg, or .webp; default: stitched.png), or - for stdout (requires --format; not with --json)"
     )]
     output: PathBuf,
 
@@ -226,7 +227,7 @@ struct Cli {
         long,
         value_enum,
         value_name = "FORMAT",
-        help = "Output format: png or jpeg; overrides the output extension (required with -o -)"
+        help = "Output format: png, jpeg, or webp (lossless); overrides the output extension (required with -o -)"
     )]
     format: Option<CliFormat>,
 
@@ -752,7 +753,7 @@ mod tests {
         assert_eq!(by_name("gradient_angle")["default"], 180);
         assert_eq!(by_name("jpeg_quality")["type"], "integer");
         assert_eq!(by_name("jpeg_quality")["default"], 75);
-        assert_eq!(by_name("format")["enum"], json!(["png", "jpeg"]));
+        assert_eq!(by_name("format")["enum"], json!(["png", "jpeg", "webp"]));
         assert!(by_name("format")["default"].is_null());
         assert!(Cli::try_parse_from(["stitchr", "image.png", "--jpeg-quality", "0"]).is_err());
         assert!(Cli::try_parse_from(["stitchr", "image.png", "--jpeg-quality", "101"]).is_err());

@@ -49,6 +49,7 @@ fn render_reports_written_file_dimensions_and_normalized_format() {
         ("combined.PNG", "png"),
         ("combined.JPG", "jpeg"),
         ("combined.jpeg", "jpeg"),
+        ("combined.WebP", "webp"),
     ] {
         let value = response(
             &run(
@@ -112,7 +113,7 @@ fn processing_failures_have_stable_codes_and_no_output_file() {
         (vec!["missing.png"], "input_error"),
         (vec!["corrupt.png"], "input_error"),
         (
-            vec!["first.png", "--output", "result.webp"],
+            vec!["first.png", "--output", "result.bmp"],
             "unsupported_output_format",
         ),
         (vec!["first.png", "--output", "blocked.png"], "output_error"),
@@ -336,7 +337,7 @@ fn unsupported_output_details_list_extensions() {
 
     assert_eq!(
         value["error"]["details"],
-        json!({ "path": "out.bmp", "supported_extensions": ["png", "jpg", "jpeg"] })
+        json!({ "path": "out.bmp", "supported_extensions": ["png", "jpg", "jpeg", "webp"] })
     );
 }
 

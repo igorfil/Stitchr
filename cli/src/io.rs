@@ -11,10 +11,19 @@ use stitchr_core::{
 };
 
 pub(crate) const STDIO_PATH: &str = "-";
-const SUPPORTED_EXTENSIONS: [&str; 3] = ["png", "jpg", "jpeg"];
+const SUPPORTED_EXTENSIONS: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
+const SUPPORTED_FORMATS: [&str; 3] = ["png", "jpeg", "webp"];
 
 pub(crate) fn is_stdio(path: &Path) -> bool {
     path.as_os_str() == STDIO_PATH
+}
+
+pub(crate) fn format_name(format: ExportFormat) -> &'static str {
+    match format {
+        ExportFormat::Png => "png",
+        ExportFormat::Jpeg => "jpeg",
+        ExportFormat::Webp => "webp",
+    }
 }
 
 pub(crate) fn output_format(
@@ -24,12 +33,13 @@ pub(crate) fn output_format(
     match format {
         Some(CliFormat::Png) => return Ok(ExportFormat::Png),
         Some(CliFormat::Jpeg) => return Ok(ExportFormat::Jpeg),
+        Some(CliFormat::Webp) => return Ok(ExportFormat::Webp),
         None if is_stdio(output) => {
             return Err(CliError::new(
                 "unsupported_output_format",
-                "-o - requires --format png or --format jpeg",
+                "-o - requires --format png, jpeg, or webp",
             )
-            .with_details(json!({ "path": STDIO_PATH, "supported_formats": ["png", "jpeg"] })))
+            .with_details(json!({ "path": STDIO_PATH, "supported_formats": SUPPORTED_FORMATS })))
         }
         None => {}
     }
@@ -40,9 +50,10 @@ pub(crate) fn output_format(
         {
             Ok(ExportFormat::Jpeg)
         }
+        Some(extension) if extension.eq_ignore_ascii_case("webp") => Ok(ExportFormat::Webp),
         _ => Err(CliError::new(
             "unsupported_output_format",
-            "output filename must end in .png, .jpg, or .jpeg",
+            "output filename must end in .png, .jpg, .jpeg, or .webp",
         )
         .with_details(json!({
             "path": output.to_string_lossy(),
@@ -121,7 +132,7 @@ pub(crate) fn validate_stdout(
     if format.is_none() {
         return Err(CliError::new(
             "invalid_arguments",
-            "-o - requires --format png or --format jpeg",
+            "-o - requires --format png, jpeg, or webp",
         )
         .with_details(json!({ "kind": "missing_required_argument", "option": "--format", "required_by": "--output -" })));
     }
@@ -287,10 +298,7 @@ pub(crate) fn export(
         output_abs,
         width: composed.width(),
         height: composed.height(),
-        format: match format {
-            ExportFormat::Png => "png",
-            ExportFormat::Jpeg => "jpeg",
-        },
+        format: format_name(format),
     })
 }
 

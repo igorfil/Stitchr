@@ -25,6 +25,8 @@ use std::path::Path;
 pub enum ExportFormat {
     Png,
     Jpeg,
+    /// Lossless.
+    Webp,
 }
 
 /// Detects the format from the content, falling back to the extension.
@@ -334,6 +336,8 @@ pub fn write_image(
             image::codecs::jpeg::JpegEncoder::new_with_quality(writer, jpeg_quality)
                 .encode_image(&rgb)
         }
+        ExportFormat::Webp => DynamicImage::ImageRgba8(image.to_rgba8())
+            .write_with_encoder(image::codecs::webp::WebPEncoder::new_lossless(writer)),
     }
 }
 
@@ -523,6 +527,26 @@ mod tests {
 
         assert_eq!(loaded.metadata.name, "photo.jpeg");
         assert_eq!((loaded.metadata.width, loaded.metadata.height), (4, 1));
+    }
+
+    #[test]
+    fn webp_export_is_lossless() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("out.webp");
+        let original = DynamicImage::ImageRgba8(RgbaImage::from_fn(3, 2, |x, y| {
+            Rgba([x as u8 * 80, y as u8 * 120, 7, 255])
+        }));
+        export_image(&original, &path, ExportFormat::Webp).unwrap();
+
+        assert_eq!(
+            image::ImageReader::open(&path)
+                .unwrap()
+                .with_guessed_format()
+                .unwrap()
+                .format(),
+            Some(image::ImageFormat::WebP)
+        );
+        assert_same_image(&load_image(&path).unwrap(), &original);
     }
 
     fn webp_bytes(image: &RgbaImage) -> Vec<u8> {

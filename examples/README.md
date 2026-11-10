@@ -236,7 +236,7 @@ stitchr docs/examples/light.png docs/examples/dark.png docs/examples/dark.png do
 
 ### JPEG
 
-The output extension picks the format: `.png`, `.jpg`, or `.jpeg`, or set it explicitly with `--format png|jpeg`. Use `--jpeg-quality` (1-100, default 75) to trade file size for quality.
+The output extension picks the format: `.png`, `.jpg`, `.jpeg`, or `.webp` (lossless), or set it explicitly with `--format png|jpeg|webp`. Use `--jpeg-quality` (1-100, default 75) to trade file size for quality.
 
 ```sh
 stitchr docs/examples/light.png docs/examples/dark.png --layout horizontal --spacing 24 --background '#14b8a6' \

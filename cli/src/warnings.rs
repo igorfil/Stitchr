@@ -78,13 +78,24 @@ fn ignored_reason(cli: &Cli, option: &str, applies: &Applies) -> Option<String> 
             Some(format!("{option} is not used with --print-spec"))
         }
         Applies::JpegOutput => match io::output_format(&cli.output, cli.format) {
-            Ok(ExportFormat::Png) => Some(format!("{option} is not used for PNG output")),
+            Ok(format) if format != ExportFormat::Jpeg => Some(format!(
+                "{option} is not used for {} output",
+                display_name(format)
+            )),
             _ => None,
         },
         Applies::FileOutput if io::is_stdio(&cli.output) => {
             Some(format!("{option} is not used with -o -"))
         }
         _ => None,
+    }
+}
+
+fn display_name(format: ExportFormat) -> &'static str {
+    match format {
+        ExportFormat::Png => "PNG",
+        ExportFormat::Jpeg => "JPEG",
+        ExportFormat::Webp => "WebP",
     }
 }
 
@@ -153,13 +164,6 @@ pub(crate) fn option_warnings(cli: &Cli) -> Vec<Warning> {
     warnings
 }
 
-fn format_name(format: ExportFormat) -> &'static str {
-    match format {
-        ExportFormat::Png => "png",
-        ExportFormat::Jpeg => "jpeg",
-    }
-}
-
 /// `--format` that contradicts a known output extension, e.g. JPEG data in `out.png`.
 pub(crate) fn format_warnings(cli: &Cli) -> Vec<Warning> {
     if cli.print_spec || io::is_stdio(&cli.output) {
@@ -180,15 +184,15 @@ pub(crate) fn format_warnings(cli: &Cli) -> Vec<Warning> {
         code: "format_mismatch",
         reason: format!(
             "--format {} writes {} data to {path}, whose extension suggests {}",
-            format_name(chosen),
-            format_name(chosen).to_uppercase(),
-            format_name(implied).to_uppercase()
+            io::format_name(chosen),
+            display_name(chosen),
+            display_name(implied)
         ),
         context: json!({
             "option": "--format",
-            "format": format_name(chosen),
+            "format": io::format_name(chosen),
             "path": path,
-            "extension_format": format_name(implied)
+            "extension_format": io::format_name(implied)
         }),
     }]
 }
@@ -625,8 +629,19 @@ mod tests {
     #[test]
     fn jpeg_quality_with_an_unknown_output_extension_is_left_to_the_format_error() {
         assert_eq!(
-            options(&["a.png", "--jpeg-quality", "90", "-o", "out.webp"]),
+            options(&["a.png", "--jpeg-quality", "90", "-o", "out.bmp"]),
             Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn jpeg_quality_is_ignored_for_webp_output() {
+        assert_eq!(
+            ignored(&["a.png", "--jpeg-quality", "90", "-o", "out.webp"]),
+            [(
+                "--jpeg-quality".to_owned(),
+                "--jpeg-quality is not used for WebP output".to_owned()
+            )]
         );
     }
 

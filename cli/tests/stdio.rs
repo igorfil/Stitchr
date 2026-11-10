@@ -76,6 +76,7 @@ fn stdout_output_contains_only_the_encoded_image() {
     for (format, magic) in [
         ("png", &[0x89, b'P', b'N', b'G'][..]),
         ("jpeg", &[0xff, 0xd8, 0xff][..]),
+        ("webp", &b"RIFF"[..]),
     ] {
         let output = run(
             &directory,

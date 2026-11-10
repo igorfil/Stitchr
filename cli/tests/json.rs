@@ -166,6 +166,20 @@ fn argument_failures_are_json_even_when_parsing_stops_before_the_flag() {
 }
 
 #[test]
+fn negative_spacing_reports_the_bound_in_json() {
+    let directory = fixtures();
+    let value = response(
+        &run(&directory, &["--json", "first.png", "--spacing", "-5"]),
+        2,
+    );
+    let message = value["error"]["message"].as_str().unwrap();
+
+    assert_eq!(value["error"]["code"], "invalid_arguments");
+    assert!(message.contains("must be ≥ 0"), "{message}");
+    assert!(!message.contains("-- -5"), "{message}");
+}
+
+#[test]
 fn spec_and_schema_modes_are_versioned_and_can_be_wrapped() {
     let directory = fixtures();
     let plain = run(&directory, &["first.png", "--print-spec"]);

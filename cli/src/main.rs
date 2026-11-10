@@ -68,13 +68,15 @@ struct Cli {
     )]
     layout: CliLayout,
 
-    #[arg(long, default_value_t = 2, value_parser = clap::value_parser!(u32).range(1..), value_name = "COUNT", help = "Grid columns (positive integer; only for grid)")]
+    #[arg(long, default_value_t = 2, allow_negative_numbers = true, value_parser = clap::value_parser!(u32).range(1..), value_name = "COUNT", help = "Grid columns (positive integer; only for grid)")]
     columns: u32,
 
     #[arg(
         long,
         default_value_t = 0,
         value_name = "PIXELS",
+        allow_negative_numbers = true,
+        value_parser = non_negative,
         help = "Space between images and around the canvas (nonnegative integer; grid/stack)"
     )]
     spacing: u32,
@@ -101,16 +103,18 @@ struct Cli {
     )]
     gradient_kind: CliGradientKind,
 
-    #[arg(long, default_value_t = 180, value_parser = clap::value_parser!(u32).range(0..360), value_name = "DEGREES", help = "Linear gradient direction like CSS: 0 up, 90 right, 180 down (integer 0-359; only for linear gradients)")]
+    #[arg(long, default_value_t = 180, allow_negative_numbers = true, value_parser = clap::value_parser!(u32).range(0..360), value_name = "DEGREES", help = "Linear gradient direction like CSS: 0 up, 90 right, 180 down (integer 0-359; only for linear gradients)")]
     gradient_angle: u32,
 
-    #[arg(long, action = ArgAction::Append, num_args = 2, value_names = ["X", "Y"], help = "Freeform top-left coordinates (nonnegative integers; repeat once per image)")]
+    #[arg(long, action = ArgAction::Append, num_args = 2, value_names = ["X", "Y"], allow_negative_numbers = true, value_parser = non_negative, help = "Freeform top-left coordinates (nonnegative integers; repeat once per image)")]
     position: Vec<u32>,
 
     #[arg(
         long,
         default_value_t = 0,
         value_name = "PIXELS",
+        allow_negative_numbers = true,
+        value_parser = non_negative,
         help = "Width of the background-colored line between split images (nonnegative integer; only for split)"
     )]
     divider: u32,
@@ -122,6 +126,8 @@ struct Cli {
         long,
         default_value_t = 2,
         value_name = "PIXELS",
+        allow_negative_numbers = true,
+        value_parser = non_negative,
         help = "Border width around labeled images (nonnegative integer; only with --label)"
     )]
     border_width: u32,
@@ -129,7 +135,7 @@ struct Cli {
     #[arg(long, default_value_t = RgbColor { red: 128, green: 128, blue: 128 }, value_name = "COLOR", help = "Border and label tab color: RGB #RRGGBB, rgb(r,g,b), or common color name (only with --label)")]
     border_color: RgbColor,
 
-    #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u32).range(1..), value_name = "PIXELS", help = "Label font size (positive integer; only with --label)")]
+    #[arg(long, default_value_t = 20, allow_negative_numbers = true, value_parser = clap::value_parser!(u32).range(1..), value_name = "PIXELS", help = "Label font size (positive integer; only with --label)")]
     label_size: u32,
     #[arg(
         long,
@@ -148,7 +154,7 @@ struct Cli {
     )]
     format: Option<CliFormat>,
 
-    #[arg(long, default_value_t = DEFAULT_JPEG_QUALITY, value_parser = clap::value_parser!(u8).range(1..=100), value_name = "QUALITY", help = "JPEG encoding quality (integer 1-100; only for .jpg/.jpeg output)")]
+    #[arg(long, default_value_t = DEFAULT_JPEG_QUALITY, allow_negative_numbers = true, value_parser = clap::value_parser!(u8).range(1..=100), value_name = "QUALITY", help = "JPEG encoding quality (integer 1-100; only for .jpg/.jpeg output)")]
     jpeg_quality: u8,
 
     #[arg(long = "help-json", visible_alias = "schema", action = ArgAction::SetTrue, help = "Print the full CLI specification as JSON (boolean; default: false)")]
@@ -159,6 +165,19 @@ struct Cli {
 
     #[arg(long, action = ArgAction::SetTrue, help = "Print versioned JSON results and errors to stdout")]
     json: bool,
+}
+
+fn non_negative(value: &str) -> Result<u32, String> {
+    let digits = |text: &str| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit());
+    value
+        .parse::<u32>()
+        .map_err(|_| match value.strip_prefix('-') {
+            Some(magnitude) if digits(magnitude) => "must be ≥ 0".to_owned(),
+            _ if digits(value.strip_prefix('+').unwrap_or(value)) => {
+                format!("must be at most {}", u32::MAX)
+            }
+            _ => "must be an integer ≥ 0".to_owned(),
+        })
 }
 
 fn argument_schema(arg: &Arg) -> Value {
@@ -674,6 +693,94 @@ mod tests {
             json!(["--help-json", "--schema"])
         );
         assert!(value["examples"].as_array().unwrap().len() >= 2);
+    }
+
+    #[test]
+    fn non_negative_accepts_zero_and_u32_range() {
+        assert_eq!(non_negative("0"), Ok(0));
+        assert_eq!(non_negative("42"), Ok(42));
+        assert_eq!(non_negative("+7"), Ok(7));
+        assert_eq!(non_negative("4294967295"), Ok(u32::MAX));
+    }
+
+    #[test]
+    fn non_negative_rejects_negative_numbers_with_a_bound_message() {
+        assert_eq!(non_negative("-5"), Err("must be ≥ 0".to_owned()));
+        assert_eq!(non_negative("-1"), Err("must be ≥ 0".to_owned()));
+    }
+
+    #[test]
+    fn non_negative_rejects_numbers_above_u32_max() {
+        assert_eq!(
+            non_negative("4294967296"),
+            Err("must be at most 4294967295".to_owned())
+        );
+    }
+
+    #[test]
+    fn non_negative_rejects_non_integers() {
+        for value in ["", "abc", "1.5", "-", "-x", "1e3"] {
+            assert_eq!(
+                non_negative(value),
+                Err("must be an integer ≥ 0".to_owned()),
+                "{value:?}"
+            );
+        }
+    }
+
+    fn parse_error(args: &[&str]) -> String {
+        Cli::try_parse_from(std::iter::once("stitchr").chain(args.iter().copied()))
+            .unwrap_err()
+            .to_string()
+    }
+
+    #[test]
+    fn negative_pixel_options_report_the_bound_instead_of_a_double_dash_hint() {
+        for option in ["--spacing", "--divider", "--border-width"] {
+            let message = parse_error(&["image.png", option, "-5"]);
+
+            assert!(
+                message.contains("invalid value '-5'"),
+                "{option}: {message}"
+            );
+            assert!(message.contains("must be ≥ 0"), "{option}: {message}");
+            assert!(!message.contains("use '-- -5'"), "{option}: {message}");
+        }
+    }
+
+    #[test]
+    fn negative_freeform_coordinates_report_the_bound() {
+        let message = parse_error(&["image.png", "--layout", "freeform", "--position", "3", "-4"]);
+
+        assert!(message.contains("invalid value '-4'"), "{message}");
+        assert!(message.contains("must be ≥ 0"), "{message}");
+    }
+
+    #[test]
+    fn negative_ranged_options_report_their_range() {
+        for (option, range) in [
+            ("--columns", "1.."),
+            ("--label-size", "1.."),
+            ("--jpeg-quality", "1..=100"),
+            ("--gradient-angle", "0..360"),
+        ] {
+            let message = parse_error(&["image.png", option, "-1"]);
+
+            assert!(
+                message.contains("invalid value '-1'"),
+                "{option}: {message}"
+            );
+            assert!(message.contains(range), "{option}: {message}");
+            assert!(!message.contains("use '-- -1'"), "{option}: {message}");
+        }
+    }
+
+    #[test]
+    fn negative_number_is_still_an_input_path_after_double_dash() {
+        let cli = Cli::try_parse_from(["stitchr", "--spacing", "3", "--", "-5"]).unwrap();
+
+        assert_eq!(cli.images, [PathBuf::from("-5")]);
+        assert_eq!(cli.spacing, 3);
     }
 
     #[test]

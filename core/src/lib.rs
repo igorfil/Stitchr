@@ -1,11 +1,8 @@
 pub mod color;
-pub mod ffi;
 mod frame;
 mod gradient;
 mod layout;
 pub mod spec;
-
-uniffi::setup_scaffolding!();
 
 pub use color::{ColorParseError, RgbColor};
 pub use frame::SpecFrame;
@@ -125,10 +122,19 @@ fn render_split(
         .map(DynamicImage::to_rgba8)
         .collect::<Vec<_>>();
     for (x, y, pixel) in canvas.enumerate_pixels_mut() {
-        if let Some(index) = layout::split_region((x, y), size, layers.len(), divider) {
-            pixel.blend(layers[index].get_pixel(x, y));
-            pixel.0[3] = 255;
-        }
+        let background = *pixel;
+        let coverage = layout::split_coverage((x, y), size, layers.len(), divider);
+        let divider_share = 1.0 - coverage.clone().map(|(_, share)| share).sum::<f64>();
+        let mixed = coverage.fold(
+            background.0.map(|channel| f64::from(channel) * divider_share),
+            |mixed, (index, share)| {
+                let mut sample = background;
+                sample.blend(layers[index].get_pixel(x, y));
+                std::array::from_fn(|c| mixed[c] + f64::from(sample.0[c]) * share)
+            },
+        );
+        *pixel = Rgba(mixed.map(|channel| channel.round().clamp(0.0, 255.0) as u8));
+        pixel.0[3] = 255;
     }
     Ok(DynamicImage::ImageRgba8(canvas))
 }

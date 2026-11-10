@@ -26,12 +26,3 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Test
         run: cargo test --workspace --locked
-
-  macos-app:
-    name: Experimental macOS app
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Build app and test preview scheduling
-        run: bash app/build.sh --test

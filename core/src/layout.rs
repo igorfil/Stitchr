@@ -153,6 +153,35 @@ pub(crate) fn split_region(
     (!on_divider).then_some(band as usize)
 }
 
+/// Returns the fraction of pixel `(x, y)` covered by each visible image, using the same
+/// bands as [`split_region`]. Any remaining coverage belongs to the divider.
+pub(crate) fn split_coverage(
+    (x, y): (u32, u32),
+    (width, height): (u32, u32),
+    count: usize,
+    divider: u32,
+) -> impl Iterator<Item = (usize, f64)> + Clone {
+    let slant = (1.0_f64 + 0.4 * 0.4).sqrt();
+    let position =
+        (f64::from(x) + 0.5 + 0.4 * (f64::from(y) + 0.5 - f64::from(height) / 2.0)) / slant;
+    let band_width = f64::from(width) / count as f64 / slant;
+    let gap = f64::from(divider) / 2.0;
+    (0..count)
+        .map(move |band| {
+            let start = match band {
+                0 => f64::NEG_INFINITY,
+                _ => band as f64 * band_width + gap,
+            };
+            let end = match band + 1 == count {
+                true => f64::INFINITY,
+                false => (band + 1) as f64 * band_width - gap,
+            };
+            let share = end.min(position + 0.5) - start.max(position - 0.5);
+            (band, share.clamp(0.0, 1.0))
+        })
+        .filter(|&(_, share)| share > 0.0)
+}
+
 fn with_padding(plan: Plan, spacing: u32) -> Result<Plan, ComposeError> {
     let margin = spacing.checked_mul(2).ok_or(ComposeError::SizeOverflow)?;
     let width = plan

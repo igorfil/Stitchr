@@ -389,6 +389,7 @@ fn collect_warnings(cli: &Cli, spec: &CompositionSpec, metadata: &[ImageMetadata
         .as_ref()
         .map_or(&[][..], |frame| frame.labels.as_slice());
     let mut collected = warnings::option_warnings(cli);
+    collected.extend(warnings::format_warnings(cli));
     collected.extend(warnings::fit_warnings(cli, metadata));
     collected.extend(warnings::label_warnings(&label_warnings(spec), labels));
     collected

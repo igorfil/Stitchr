@@ -118,6 +118,7 @@ A request can succeed but probably not do what was intended. Renders and `--prin
 | `option_ignored` | `option` | An explicitly passed option has no effect, for example `--spacing` with `--layout split`, label styling without `--label`, `--gradient-angle` with a radial gradient, `--jpeg-quality` for PNG output, or output options with `--print-spec`. |
 | `label_overflow` | `index`, `label`, `tab_width`, `available_width` | A label tab is wider than its image (or split band) and extends past it. |
 | `missing_glyphs` | `index`, `label`, `characters` | The label font cannot draw these characters; they render as gaps. Pass `--font` with a font that covers them. |
+| `format_mismatch` | `option`, `format`, `path`, `extension_format` | `--format` writes a different format than the output extension suggests, for example JPEG data in `out.png`. |
 | `fit_not_applied` | `option`, `index`, `size`, `target` | An image is already smaller than the `--fit-height`/`--fit-width` target, so it is left unchanged. |
 
 ```json

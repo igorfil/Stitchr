@@ -325,7 +325,13 @@ mod tests {
                 .iter()
                 .map(|entry| entry["code"].as_str().unwrap())
                 .collect::<Vec<_>>(),
-            ["option_ignored", "label_overflow", "missing_glyphs"]
+            [
+                "option_ignored",
+                "label_overflow",
+                "missing_glyphs",
+                "format_mismatch",
+                "fit_not_applied"
+            ]
         );
         assert_eq!(
             value["exit_codes"]

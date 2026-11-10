@@ -158,3 +158,34 @@ fn label_warnings_reach_json_output() {
     assert_eq!(warnings[0]["label"], "Long label");
     assert_eq!(warnings[0]["available_width"], 12);
 }
+
+#[test]
+fn jpeg_format_into_a_png_file_warns() {
+    let directory = fixtures();
+    let output = run(
+        &directory,
+        &["--json", "a.png", "--format", "jpeg", "-o", "out.png"],
+    );
+    let value = stdout_json(&output);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(value["format"], "jpeg");
+    assert_eq!(value["warnings"][0]["code"], "format_mismatch");
+    assert!(std::fs::read(directory.path().join("out.png"))
+        .unwrap()
+        .starts_with(&[0xff, 0xd8, 0xff]));
+}
+
+#[test]
+fn strict_refuses_a_format_mismatch() {
+    let directory = fixtures();
+    let output = run(
+        &directory,
+        &[
+            "--json", "--strict", "a.png", "--format", "jpeg", "-o", "out.png",
+        ],
+    );
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(!directory.path().join("out.png").exists());
+}

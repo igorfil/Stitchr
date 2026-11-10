@@ -18,7 +18,15 @@ pub(crate) const WARNING_CODES: &[(&str, &str)] = &[
     ),
     (
         "missing_glyphs",
-        "The bundled font cannot draw some label characters.",
+        "The label font cannot draw some label characters.",
+    ),
+    (
+        "format_mismatch",
+        "--format writes a different format than the output file extension suggests.",
+    ),
+    (
+        "fit_not_applied",
+        "An image is already smaller than --fit-height/--fit-width and is left unchanged, because images are never enlarged.",
     ),
 ];
 
@@ -139,6 +147,46 @@ pub(crate) fn option_warnings(cli: &Cli) -> Vec<Warning> {
             }),
     );
     warnings
+}
+
+fn format_name(format: ExportFormat) -> &'static str {
+    match format {
+        ExportFormat::Png => "png",
+        ExportFormat::Jpeg => "jpeg",
+    }
+}
+
+/// `--format` that contradicts a known output extension, e.g. JPEG data in `out.png`.
+pub(crate) fn format_warnings(cli: &Cli) -> Vec<Warning> {
+    if cli.print_spec || io::is_stdio(&cli.output) {
+        return Vec::new();
+    }
+    let (Some(_), Ok(chosen), Ok(implied)) = (
+        cli.format,
+        io::output_format(&cli.output, cli.format),
+        io::output_format(&cli.output, None),
+    ) else {
+        return Vec::new();
+    };
+    if chosen == implied {
+        return Vec::new();
+    }
+    let path = cli.output.to_string_lossy();
+    vec![Warning {
+        code: "format_mismatch",
+        reason: format!(
+            "--format {} writes {} data to {path}, whose extension suggests {}",
+            format_name(chosen),
+            format_name(chosen).to_uppercase(),
+            format_name(implied).to_uppercase()
+        ),
+        context: json!({
+            "option": "--format",
+            "format": format_name(chosen),
+            "path": path,
+            "extension_format": format_name(implied)
+        }),
+    }]
 }
 
 fn fit_warning(
@@ -272,6 +320,25 @@ mod tests {
             .into_iter()
             .map(|(option, _)| option)
             .collect()
+    }
+
+    #[test]
+    fn every_emitted_warning_code_is_listed() {
+        let source = include_str!("warnings.rs");
+        let emitted = source
+            .split("code: \"")
+            .skip(1)
+            .filter_map(|rest| rest.split('"').next())
+            .filter(|code| !code.contains(' '))
+            .collect::<Vec<_>>();
+
+        assert!(emitted.len() >= 5);
+        for code in emitted {
+            assert!(
+                WARNING_CODES.iter().any(|(listed, _)| *listed == code),
+                "{code}"
+            );
+        }
     }
 
     #[test]
@@ -766,6 +833,66 @@ mod tests {
         assert!(
             fit_warnings(&cli(&["--spec", "s.json", "--fit-height", "50"]), &images).is_empty()
         );
+    }
+
+    #[test]
+    fn format_contradicting_the_extension_is_reported() {
+        let warnings = format_warnings(&cli(&["a.png", "--format", "jpeg", "-o", "out.png"]));
+
+        assert_eq!(
+            warnings.iter().map(Warning::json).collect::<Vec<_>>(),
+            [json!({
+                "code": "format_mismatch",
+                "option": "--format",
+                "format": "jpeg",
+                "path": "out.png",
+                "extension_format": "png",
+                "reason": "--format jpeg writes JPEG data to out.png, whose extension suggests PNG"
+            })]
+        );
+    }
+
+    #[test]
+    fn png_format_into_a_jpeg_extension_is_reported() {
+        let warnings = format_warnings(&cli(&["a.png", "--format", "png", "-o", "photo.JPG"]));
+
+        assert_eq!(warnings[0].context["extension_format"], "jpeg");
+    }
+
+    #[test]
+    fn format_matching_the_extension_is_not_reported() {
+        for args in [
+            ["a.png", "--format", "jpeg", "-o", "out.jpeg"],
+            ["a.png", "--format", "jpg", "-o", "out.jpg"],
+            ["a.png", "--format", "png", "-o", "out.PNG"],
+        ] {
+            assert!(format_warnings(&cli(&args)).is_empty(), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn format_for_an_unknown_or_missing_extension_is_not_reported() {
+        assert!(format_warnings(&cli(&["a.png", "--format", "jpeg", "-o", "out.img"])).is_empty());
+        assert!(format_warnings(&cli(&["a.png", "--format", "png", "-o", "out"])).is_empty());
+    }
+
+    #[test]
+    fn format_mismatch_is_not_reported_without_a_file_output() {
+        assert!(format_warnings(&cli(&["a.png", "--format", "jpeg", "-o", "-"])).is_empty());
+        assert!(format_warnings(&cli(&[
+            "a.png",
+            "--format",
+            "jpeg",
+            "-o",
+            "out.png",
+            "--print-spec"
+        ]))
+        .is_empty());
+    }
+
+    #[test]
+    fn extension_alone_never_reports_a_mismatch() {
+        assert!(format_warnings(&cli(&["a.png", "-o", "out.jpg"])).is_empty());
     }
 
     #[test]

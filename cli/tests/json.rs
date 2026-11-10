@@ -478,10 +478,7 @@ fn mkdir_creates_missing_parent_directories() {
     );
 
     assert_eq!(value["output"], "a/b/out.png");
-    assert!(value["output_abs"]
-        .as_str()
-        .unwrap()
-        .ends_with("a/b/out.png"));
+    assert!(std::path::Path::new(value["output_abs"].as_str().unwrap()).ends_with("a/b/out.png"));
     assert!(directory.path().join("a/b/out.png").exists());
 }
 

@@ -92,7 +92,7 @@ struct Cli {
     #[arg(long = "background", default_value_t = RgbColor::default(), value_name = "COLOR", help = "Opaque background: RGB #RRGGBB, rgb(r,g,b), or common color name")]
     background_color: RgbColor,
 
-    #[arg(long, num_args = 2, value_names = ["FROM", "TO"], conflicts_with = "background_color", help = "Gradient background from one color to another, instead of --background; split dividers use FROM")]
+    #[arg(long, action = ArgAction::Set, num_args = 2, value_names = ["FROM", "TO"], conflicts_with = "background_color", help = "Gradient background from one color to another, instead of --background; split dividers use FROM")]
     background_gradient: Vec<RgbColor>,
 
     #[arg(
@@ -781,6 +781,77 @@ mod tests {
 
         assert_eq!(cli.images, [PathBuf::from("-5")]);
         assert_eq!(cli.spacing, 3);
+    }
+
+    #[test]
+    fn repeated_background_gradient_is_rejected_instead_of_silently_dropped() {
+        let message = parse_error(&[
+            "image.png",
+            "--background-gradient",
+            "red",
+            "blue",
+            "--background-gradient",
+            "green",
+            "white",
+        ]);
+
+        assert!(message.contains("--background-gradient"), "{message}");
+        assert!(
+            message.contains("cannot be used multiple times"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn single_background_gradient_keeps_both_colors() {
+        let cli = Cli::try_parse_from([
+            "stitchr",
+            "image.png",
+            "--background-gradient",
+            "red",
+            "blue",
+        ])
+        .unwrap();
+
+        assert_eq!(
+            cli.background_gradient,
+            [
+                RgbColor {
+                    red: 255,
+                    green: 0,
+                    blue: 0
+                },
+                RgbColor {
+                    red: 0,
+                    green: 0,
+                    blue: 255
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn background_gradient_requires_exactly_two_colors() {
+        assert!(
+            Cli::try_parse_from(["stitchr", "image.png", "--background-gradient", "red"]).is_err()
+        );
+    }
+
+    #[test]
+    fn schema_marks_background_gradient_as_not_repeatable() {
+        let value = schema();
+        let gradient = value["arguments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|arg| arg["name"] == "background_gradient")
+            .unwrap();
+
+        assert_eq!(gradient["repeatable"], false);
+        assert_eq!(
+            gradient["values_per_occurrence"],
+            json!({"min": 2, "max": 2})
+        );
     }
 
     #[test]

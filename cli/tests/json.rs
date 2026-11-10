@@ -180,6 +180,30 @@ fn negative_spacing_reports_the_bound_in_json() {
 }
 
 #[test]
+fn repeated_background_gradient_is_an_argument_error() {
+    let directory = fixtures();
+    let value = response(
+        &run(
+            &directory,
+            &[
+                "--json",
+                "first.png",
+                "--background-gradient",
+                "red",
+                "blue",
+                "--background-gradient",
+                "green",
+                "white",
+                "--print-spec",
+            ],
+        ),
+        2,
+    );
+
+    assert_eq!(value["error"]["code"], "invalid_arguments");
+}
+
+#[test]
 fn spec_and_schema_modes_are_versioned_and_can_be_wrapped() {
     let directory = fixtures();
     let plain = run(&directory, &["first.png", "--print-spec"]);

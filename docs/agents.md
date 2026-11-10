@@ -16,6 +16,10 @@ stitchr --json --help-json
 
 The response contains `schema`, including the installed program version, arguments, types, defaults, enums, arity, and examples. `--schema` is an alias for `--help-json`.
 
+Each argument also lists `minimum`/`maximum` for integers, `conflicts_with`, and when it has an effect: `applies_to_layouts` (`null` means every layout), `requires` (for example `["--label"]`), `ignored_with` (`--print-spec`, `-o -`), and where relevant `applies_to_formats` or `applies_to_gradient_kinds`. The schema also lists `error_codes` (with each code's `exit_code`), `warning_codes`, and `exit_codes`.
+
+For a standard [JSON Schema](https://json-schema.org/draft/2020-12/schema) of a request, with one property per argument, pass `--schema=jsonschema` (or `--help-json=jsonschema`). It can be used directly as a tool input schema; each property's `x-stitchr-flag` names the CLI flag it maps to. The `=` is required, so `--schema image.png` still treats `image.png` as an input.
+
 ### 2. Choose inputs and layout
 
 Use the cookbook to select a layout. Resolve inputs to local files and put them in the intended order. When passing an argument array, expand globs yourself; Stitchr does not expand `*.png`.

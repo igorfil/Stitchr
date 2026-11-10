@@ -1,6 +1,7 @@
 mod composer;
 mod error;
 mod io;
+mod options;
 mod schema;
 mod warnings;
 
@@ -16,12 +17,19 @@ use stitchr_core::{
 use warnings::Warning;
 
 const SCHEMA_VERSION: u32 = 1;
+const DEFAULT_SCHEMA_FORMAT: &str = "stitchr";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum CliFormat {
     Png,
     #[value(alias = "jpg")]
     Jpeg,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum SchemaFormat {
+    Stitchr,
+    Jsonschema,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -155,8 +163,8 @@ struct Cli {
     #[arg(long, default_value_t = DEFAULT_JPEG_QUALITY, allow_negative_numbers = true, value_parser = clap::value_parser!(u8).range(1..=100), value_name = "QUALITY", help = "JPEG encoding quality (integer 1-100; only for .jpg/.jpeg output)")]
     jpeg_quality: u8,
 
-    #[arg(long = "help-json", visible_alias = "schema", action = ArgAction::SetTrue, help = "Print the full CLI specification as JSON (boolean; default: false)")]
-    help_json: bool,
+    #[arg(long = "help-json", visible_alias = "schema", value_enum, num_args = 0..=1, require_equals = true, default_missing_value = DEFAULT_SCHEMA_FORMAT, value_name = "FORMAT", help = "Print the full CLI specification as JSON: stitchr (default) or jsonschema for a standard JSON Schema of the arguments, e.g. --schema=jsonschema")]
+    help_json: Option<SchemaFormat>,
 
     #[arg(long = "print-spec", action = ArgAction::SetTrue, help = "Print the composition spec as JSON after loading inputs (boolean; default: false)")]
     print_spec: bool,
@@ -299,8 +307,10 @@ fn collect_warnings(cli: &Cli, spec: &CompositionSpec, metadata: &[ImageMetadata
 }
 
 fn execute(cli: Cli) -> Result<Success, CliError> {
-    if cli.help_json {
-        return Ok(Success::Schema(schema::schema()));
+    match cli.help_json {
+        Some(SchemaFormat::Stitchr) => return Ok(Success::Schema(schema::schema())),
+        Some(SchemaFormat::Jsonschema) => return Ok(Success::Schema(schema::json_schema())),
+        None => {}
     }
     io::validate_stdin(&cli.images)?;
     let loaded = io::load_images(&cli.images)?;
@@ -442,15 +452,17 @@ mod tests {
 
     #[test]
     fn schema_lists_flags_types_enums_defaults_and_alias() {
-        assert!(
+        assert_eq!(
             Cli::try_parse_from(["stitchr", "--help-json"])
                 .unwrap()
-                .help_json
+                .help_json,
+            Some(SchemaFormat::Stitchr)
         );
-        assert!(
+        assert_eq!(
             Cli::try_parse_from(["stitchr", "--schema"])
                 .unwrap()
-                .help_json
+                .help_json,
+            Some(SchemaFormat::Stitchr)
         );
 
         let value: Value = serde_json::from_str(&schema::schema().to_string()).unwrap();
@@ -505,11 +517,17 @@ mod tests {
         assert!(args.iter().all(|arg| arg["name"] != "max_size"));
         assert_eq!(by_name("position")["repeatable"], true);
         assert_eq!(by_name("position")["values_per_occurrence"]["min"], 2);
-        assert_eq!(by_name("help_json")["type"], "boolean");
-        assert_eq!(by_name("help_json")["default"], false);
+        assert_eq!(by_name("help_json")["type"], "string");
+        assert_eq!(
+            by_name("help_json")["enum"],
+            json!(["stitchr", "jsonschema"])
+        );
+        assert!(by_name("help_json")["default"].is_null());
+        assert_eq!(by_name("help_json")["default_missing_value"], "stitchr");
+        assert_eq!(by_name("help_json")["require_equals"], true);
         assert_eq!(by_name("help_json")["aliases"], json!(["--schema"]));
         assert_eq!(by_name("print_spec")["type"], "boolean");
-        assert!(by_name("help_json")["value_names"].is_null());
+        assert!(by_name("print_spec")["value_names"].is_null());
         assert_eq!(
             by_name("images")["required_unless"],
             json!(["--help-json", "--schema"])

@@ -493,3 +493,64 @@ fn missing_parent_directory_without_mkdir_is_an_output_error() {
     assert_eq!(value["error"]["code"], "output_error");
     assert_eq!(value["error"]["details"], json!({ "path": "a/b/out.png" }));
 }
+
+#[test]
+fn json_schema_format_is_available_through_both_flag_names() {
+    let directory = fixtures();
+    for flag in ["--help-json=jsonschema", "--schema=jsonschema"] {
+        let plain = run(&directory, &[flag]);
+        assert_eq!(plain.status.code(), Some(0));
+        let schema: Value = serde_json::from_slice(&plain.stdout).unwrap();
+        assert_eq!(
+            schema["$schema"],
+            "https://json-schema.org/draft/2020-12/schema"
+        );
+        assert_eq!(schema["properties"]["columns"]["minimum"], 1);
+
+        let wrapped = response(&run(&directory, &["--json", flag]), 0);
+        assert_eq!(wrapped["schema"], schema);
+    }
+}
+
+#[test]
+fn schema_flag_without_equals_does_not_swallow_an_input_path() {
+    let directory = fixtures();
+    let value = response(&run(&directory, &["--json", "--schema", "first.png"]), 0);
+
+    assert_eq!(value["schema"]["name"], "stitchr");
+    assert!(!directory.path().join("stitched.png").exists());
+}
+
+#[test]
+fn unknown_schema_format_is_an_argument_error() {
+    let directory = fixtures();
+    let value = response(&run(&directory, &["--json", "--schema=yaml"]), 2);
+
+    assert_eq!(value["error"]["code"], "invalid_arguments");
+    assert_eq!(
+        value["error"]["details"]["allowed"],
+        json!(["stitchr", "jsonschema"])
+    );
+}
+
+#[test]
+fn stitchr_schema_lists_error_codes_and_bounds() {
+    let directory = fixtures();
+    let value = response(&run(&directory, &["--json", "--schema"]), 0);
+    let schema = &value["schema"];
+
+    assert!(schema["error_codes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|entry| entry["code"] == "split_size_mismatch" && entry["exit_code"] == 1));
+    let quality = schema["arguments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|arg| arg["name"] == "jpeg_quality")
+        .unwrap();
+    assert_eq!(quality["minimum"], 1);
+    assert_eq!(quality["maximum"], 100);
+    assert_eq!(quality["applies_to_formats"], json!(["jpeg"]));
+}

@@ -1,8 +1,35 @@
-use crate::{warnings::Warning, SCHEMA_VERSION};
+use crate::{options, warnings::Warning, SCHEMA_VERSION};
 use clap::error::{ContextKind, ContextValue};
 use serde_json::{json, Value};
 use std::{path::Path, process::ExitCode};
 use stitchr_core::ComposeError;
+
+/// Every error code the CLI can report, with a short recovery hint.
+pub(crate) const ERROR_CODES: &[(&str, &str)] = &[
+    ("invalid_arguments", "Arguments could not be parsed or validated, or a warning occurred under --strict. Inspect the schema and correct the arguments."),
+    ("input_error", "An input is missing, unreadable, corrupt, or unsupported."),
+    ("unsupported_output_format", "The output must end in .png, .jpg, or .jpeg, or --format must be given."),
+    ("output_error", "The output could not be written. Check the directory, permissions, and space, or pass --mkdir."),
+    ("output_conflicts_with_input", "The output is one of the inputs. Choose another output or pass --force."),
+    ("output_exists", "The output exists and --no-clobber was given."),
+    ("freeform_position_count", "Supply exactly one --position X Y pair per input image."),
+    ("split_size_mismatch", "Split inputs must have identical dimensions."),
+    ("label_count_mismatch", "Supply exactly one --label per input image, or none."),
+    ("canvas_too_large", "The composition exceeds the supported size or memory limit."),
+    ("no_images", "The composition engine received no images."),
+    ("invalid_image_dimensions", "An input has a zero dimension."),
+    ("invalid_columns", "Grid columns must be positive."),
+    ("image_count_mismatch", "The render inputs do not match the planned composition."),
+    ("serialization_error", "The composition could not be serialized."),
+];
+
+pub(crate) fn exit_code_for(code: &str) -> u8 {
+    if code == "invalid_arguments" {
+        2
+    } else {
+        1
+    }
+}
 
 #[derive(Debug)]
 pub(crate) struct CliError {
@@ -58,11 +85,7 @@ impl CliError {
     }
 
     pub(crate) fn exit_code(&self) -> u8 {
-        if self.code == "invalid_arguments" {
-            2
-        } else {
-            1
-        }
+        exit_code_for(self.code)
     }
 
     fn json(&self) -> Value {
@@ -129,6 +152,9 @@ impl From<&clap::Error> for CliError {
                 .next()
                 .unwrap_or(&option)
                 .to_owned();
+            if let Some(range) = options::find_by_long(&name).and_then(|rule| rule.range()) {
+                details["allowed"] = json!(range);
+            }
             details["option"] = json!(name);
         }
         if let Some(value) = context_string(error, ContextKind::InvalidValue) {
@@ -434,7 +460,39 @@ mod tests {
         assert_eq!(details["kind"], "value_validation");
         assert_eq!(details["option"], "--columns");
         assert_eq!(details["value"], "0");
+        assert_eq!(details["allowed"], "1..");
         assert!(details["reason"].as_str().unwrap().contains("1.."));
+    }
+
+    #[test]
+    fn bounded_range_is_reported_as_allowed() {
+        let details = clap_error(&["a.png", "--jpeg-quality", "101"])
+            .details()
+            .cloned()
+            .unwrap();
+
+        assert_eq!(details["allowed"], "1..=100");
+    }
+
+    #[test]
+    fn every_error_code_is_documented_for_agents() {
+        let guide = include_str!("../../docs/agents.md");
+
+        for (code, _) in ERROR_CODES {
+            assert!(guide.contains(&format!("| `{code}`")), "{code}");
+        }
+    }
+
+    #[test]
+    fn error_codes_are_unique() {
+        for (index, (code, _)) in ERROR_CODES.iter().enumerate() {
+            assert!(
+                ERROR_CODES[index + 1..]
+                    .iter()
+                    .all(|(other, _)| other != code),
+                "{code}"
+            );
+        }
     }
 
     #[test]
@@ -447,7 +505,7 @@ mod tests {
         assert_eq!(
             details,
             json!({
-                "kind": "value_validation", "option": "--spacing",
+                "kind": "value_validation", "option": "--spacing", "allowed": "0..",
                 "value": "-5", "reason": "must be ≥ 0"
             })
         );

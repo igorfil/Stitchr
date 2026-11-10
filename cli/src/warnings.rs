@@ -1,7 +1,26 @@
-use crate::{io, Cli, CliGradientKind, CliLayout};
-use clap::{CommandFactory, ValueEnum};
+use crate::{
+    io,
+    options::{value_name, Applies, RULES},
+    Cli, CliGradientKind,
+};
+use clap::CommandFactory;
 use serde_json::{json, Value};
 use stitchr_core::{ExportFormat, LabelWarning};
+
+pub(crate) const WARNING_CODES: &[(&str, &str)] = &[
+    (
+        "option_ignored",
+        "An explicitly passed option has no effect on this invocation.",
+    ),
+    (
+        "label_overflow",
+        "A label tab is wider than its image or split band.",
+    ),
+    (
+        "missing_glyphs",
+        "The bundled font cannot draw some label characters.",
+    ),
+];
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Warning {
@@ -17,46 +36,6 @@ impl Warning {
         value["reason"] = json!(self.reason);
         value
     }
-}
-
-/// When an option has an effect; outside these conditions an explicit value is ignored.
-enum Applies {
-    Layouts(&'static [CliLayout]),
-    Labels,
-    Gradient,
-    LinearGradient,
-    JpegOutput,
-    Render,
-    FileOutput,
-}
-
-const STACKS_AND_GRID: &[CliLayout] =
-    &[CliLayout::Grid, CliLayout::Horizontal, CliLayout::Vertical];
-
-const RULES: &[(&str, Applies)] = &[
-    ("columns", Applies::Layouts(&[CliLayout::Grid])),
-    ("spacing", Applies::Layouts(STACKS_AND_GRID)),
-    ("alignment", Applies::Layouts(STACKS_AND_GRID)),
-    ("position", Applies::Layouts(&[CliLayout::Freeform])),
-    ("divider", Applies::Layouts(&[CliLayout::Split])),
-    ("border_width", Applies::Labels),
-    ("border_color", Applies::Labels),
-    ("label_size", Applies::Labels),
-    ("gradient_kind", Applies::Gradient),
-    ("gradient_angle", Applies::LinearGradient),
-    ("jpeg_quality", Applies::JpegOutput),
-    ("output", Applies::Render),
-    ("format", Applies::Render),
-    ("force", Applies::FileOutput),
-    ("no_clobber", Applies::FileOutput),
-    ("mkdir", Applies::FileOutput),
-];
-
-fn value_name(value: impl ValueEnum) -> String {
-    value
-        .to_possible_value()
-        .map(|value| value.get_name().to_owned())
-        .unwrap_or_default()
 }
 
 fn long_name(id: &str) -> String {
@@ -101,10 +80,10 @@ fn ignored_reason(cli: &Cli, option: &str, applies: &Applies) -> Option<String> 
 pub(crate) fn option_warnings(cli: &Cli) -> Vec<Warning> {
     RULES
         .iter()
-        .filter(|(id, _)| cli.explicit.iter().any(|explicit| explicit == id))
-        .filter_map(|(id, applies)| {
-            let option = long_name(id);
-            ignored_reason(cli, &option, applies).map(|reason| Warning {
+        .filter(|rule| cli.explicit.iter().any(|explicit| explicit == rule.id))
+        .filter_map(|rule| {
+            let option = long_name(rule.id);
+            ignored_reason(cli, &option, &rule.applies).map(|reason| Warning {
                 code: "option_ignored",
                 reason,
                 context: json!({ "option": option }),
@@ -191,6 +170,15 @@ mod tests {
             .into_iter()
             .map(|(option, _)| option)
             .collect()
+    }
+
+    #[test]
+    fn every_warning_code_is_documented_for_agents() {
+        let guide = include_str!("../../docs/agents.md");
+
+        for (code, _) in WARNING_CODES {
+            assert!(guide.contains(&format!("| `{code}`")), "{code}");
+        }
     }
 
     #[test]

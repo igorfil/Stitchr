@@ -16,7 +16,7 @@ stitchr --json --help-json
 
 The response contains `schema`, including the installed program version, arguments, types, defaults, enums, arity, and examples. `--schema` is an alias for `--help-json`.
 
-Each argument also lists `minimum`/`maximum` for integers, `conflicts_with`, and when it has an effect: `applies_to_layouts` (`null` means every layout), `requires` (for example `["--label"]`), `ignored_with` (`--print-spec`, `-o -`), and where relevant `applies_to_formats` or `applies_to_gradient_kinds`. The schema also lists `error_codes` (with each code's `exit_code`), `warning_codes`, and `exit_codes`.
+Each argument also lists `minimum`/`maximum` for integers, `conflicts_with`, and when it has an effect: `applies_to_layouts` (`null` means every layout), `requires` (for example `["--label"]`), `requires_any` (at least one of these, for example `["--box", "--arrow"]`), `ignored_with` (`--print-spec`, `-o -`), and where relevant `applies_to_formats` or `applies_to_gradient_kinds`. The schema also lists `error_codes` (with each code's `exit_code`), `warning_codes`, and `exit_codes`.
 
 For a standard [JSON Schema](https://json-schema.org/draft/2020-12/schema) of a request, with one property per argument, pass `--schema=jsonschema` (or `--help-json=jsonschema`). It can be used directly as a tool input schema; each property's `x-stitchr-flag` names the CLI flag it maps to. The `=` is required, so `--schema image.png` still treats `image.png` as an input.
 
@@ -31,6 +31,7 @@ Use the cookbook to select a layout. Resolve inputs to local files and put them 
 | Long vertical image | `vertical` | `--spacing`, `--alignment` |
 | Explicit placement or overlap | `freeform` | One `--position X Y` per input |
 | Diagonal comparison | `split` | Same-size inputs (or `--fit cover\|contain`), optional `--divider` |
+| Point something out | any | `--box`, `--arrow` in output pixels (from `--print-spec`) |
 
 ### 3. Inspect the composition
 
@@ -45,7 +46,7 @@ Read `response.spec.width`, `height`, `layout`, `background_color`, and `images`
 
 ### 3b. Optionally, patch the spec and render it
 
-`--spec FILE` (or `--spec -` for stdin) renders a spec printed by `--print-spec` instead of composing positional inputs. This gives shell-free, patchable requests: edit `position`, `background_color`, `background_gradient`, `frame`, `width`, or `height`, then render. The spec is authoritative: images are drawn at their `position` on a `width` x `height` canvas, and layout options such as `--spacing` are ignored (each one passed explicitly produces an `option_ignored` warning). Output options (`-o`, `--format`, `--jpeg-quality`, `--force`, `--no-clobber`, `--mkdir`) and `--print-spec` work as usual.
+`--spec FILE` (or `--spec -` for stdin) renders a spec printed by `--print-spec` instead of composing positional inputs. This gives shell-free, patchable requests: edit `position`, `background_color`, `background_gradient`, `frame`, `annotations`, `width`, or `height`, then render. The spec is authoritative: images are drawn at their `position` on a `width` x `height` canvas, and layout options such as `--spacing` are ignored (each one passed explicitly produces an `option_ignored` warning). Output options (`-o`, `--format`, `--jpeg-quality`, `--force`, `--no-clobber`, `--mkdir`) and `--print-spec` work as usual.
 
 ```sh
 stitchr --json a.png b.png --layout horizontal --print-spec > spec.json
@@ -122,6 +123,7 @@ A request can succeed but probably not do what was intended. Renders and `--prin
 | `format_mismatch` | `option`, `format`, `path`, `extension_format` | `--format` writes a different format than the output extension suggests, for example JPEG data in `out.png`. |
 | `tiny_images` | `index`, `width`, `height`, `source_width`, `source_height`, `scale`, `min_side` | `--max-width`/`--max-height` shrinks an image below 16 px on a side. Raise the limit, or reduce the number of inputs or the spacing. |
 | `fit_not_applied` | `option`, `index`, `size`, `target` | An image is already smaller than the `--fit-height`/`--fit-width` target, so it is left unchanged. |
+| `annotation_clipped` | `annotation_index`, `shape` (`"box"` or `"arrow"`), `canvas_width`, `canvas_height`, `visible` | A box or arrow reaches past the canvas edge. With `visible: false` none of it is drawn. Re-read `width`/`height` from `--print-spec` and adjust the coordinates. |
 
 ```json
 {"code": "option_ignored", "option": "--spacing", "reason": "--spacing is not used by the split layout"}
@@ -169,6 +171,7 @@ Many errors also carry an `error.details` object with machine-readable context. 
 | `split_size_mismatch` | `index`, `path`, `width`, `height` of the first differing input, and `expected` (`width`, `height`) |
 | `canvas_too_large` | `width`, `height`, `bytes`, `limit_bytes` when the canvas buffer exceeds the memory limit, or `max_dimension` when a side would not fit in 32 bits |
 | `freeform_position_count`, `label_count_mismatch`, `image_count_mismatch` | `expected`, `actual` |
+| `invalid_annotation` | `annotation_index`, `reason`, and `option` (`--box` or `--arrow`) when it came from arguments |
 | `unsupported_output_format` | `path`, and `supported_extensions` or `supported_formats` |
 | `output_error` | `path` |
 
@@ -195,6 +198,7 @@ Many errors also carry an `error.details` object with machine-readable context. 
 | `image_size_mismatch` | An input's size differs from the `width`/`height` its placement in the spec expects. Re-run `--print-spec` against the current inputs. |
 | `image_count_mismatch` | The render inputs do not match the planned composition. Replan; if persistent, report a bug. |
 | `invalid_spec` | The `--spec` input is not valid JSON, is not a composition spec, has an unsupported `schema_version`, has an image without a `path`, or reads stdin twice. Re-create it with `--print-spec`. |
+| `invalid_annotation` | A `--box` has zero width or height, an `--arrow` starts where it ends, or a spec annotation has `line_width` 0. Fix the coordinates or sizes. |
 | `serialization_error` | The composition could not be serialized. Report a bug. |
 
 Some engine-level codes are defensive and are not normally reachable through valid CLI arguments.
@@ -217,6 +221,7 @@ Some engine-level codes are defensive and are not normally reachable through val
 - Grid/stack spacing sets both gaps and equal outer margins. Grid columns default to `2`; spacing defaults to `0`; alignment defaults to `start`.
 - Alignment is within each grid cell or along a stack's cross-axis. Center alignment rounds offsets down to whole pixels.
 - Freeform coordinates are nonnegative top-left pixel positions. Later inputs paint over earlier ones. Spacing/alignment do not affect freeform or split mode.
+- `--box X Y WIDTH HEIGHT` and `--arrow X1 Y1 X2 Y2` (each repeatable) draw on top of the finished output, over images, borders, and labels, in every layout. Coordinates are output pixels, the same space as `spec.width`/`height` and image `position`s, so run `--print-spec` first to find where things are. They are not scaled by `--max-width`/`--max-height`. A box is an outline whose outer edge is the given rectangle; an arrow's head is at `X2 Y2`. Boxes are drawn first, then arrows, each in the order given. `--annotation-color` (default `#ff0000`) and `--annotation-width` (default `4`) apply to all of them. The spec lists them in `annotations` as `{"type": "box", "x", "y", "width", "height", "color", "line_width"}` or `{"type": "arrow", "from": {"x", "y"}, "to": {"x", "y"}, "color", "line_width"}`; patch that list to restyle or move individual shapes.
 - Split inputs must have identical dimensions. The output shows parallel diagonal slices in input order. Divider width defaults to `0`.
 - Background defaults to black. All outputs are opaque; input alpha blends onto the background. JPEG is lossy.
 - Coordinates, spacing, divider, and columns are unsigned 32-bit integers; columns must be at least `1`. Large valid integers can still exceed composition limits.

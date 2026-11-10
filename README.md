@@ -40,6 +40,7 @@ The [examples](examples/README.md) show every option with its command and output
 | Backgrounds | `--background`, `--background-gradient`, `--gradient-kind`, `--gradient-angle` | [Backgrounds](examples/README.md#3-backgrounds) |
 | Resizing | `--fit-height`, `--fit-width`, `--fit cover\|contain`, `--max-width`, `--max-height` | [Agent guide](docs/agents.md#composition-rules) |
 | Borders and labels | `--label`, `--border-width`, `--border-color`, `--label-size`, `--label-position inside\|outside`, `--label-color`, `--font` | [Borders and labels](examples/README.md#4-borders-and-labels) |
+| Boxes and arrows | `--box X Y W H`, `--arrow X1 Y1 X2 Y2`, `--annotation-color`, `--annotation-width` | [Agent guide](docs/agents.md#composition-rules) |
 | Combined recipes | Single image with a title, before/after, labeled grid | [Putting it together](examples/README.md#5-putting-it-together) |
 | Output and inspection | `-o file.png\|.jpg\|.webp\|-`, `--format`, `--jpeg-quality`, `--print-spec`, `--spec`, `--json` | [Output and inspection](examples/README.md#6-output-and-inspection) |
 

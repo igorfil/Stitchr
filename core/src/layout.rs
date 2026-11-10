@@ -94,6 +94,11 @@ pub enum ComposeError {
         bytes: u64,
         limit: u64,
     },
+    /// An annotation has no visible extent.
+    InvalidAnnotation {
+        index: usize,
+        reason: &'static str,
+    },
 }
 
 impl fmt::Display for ComposeError {
@@ -159,6 +164,9 @@ impl fmt::Display for ComposeError {
                 f,
                 "composition dimensions exceed the supported size: a {width}x{height} canvas needs {bytes} bytes, the limit is {limit}"
             ),
+            Self::InvalidAnnotation { index, reason } => {
+                write!(f, "annotation {index} is invalid: {reason}")
+            }
         }
     }
 }

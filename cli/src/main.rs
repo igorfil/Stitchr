@@ -18,9 +18,9 @@ use std::{
     process::ExitCode,
 };
 use stitchr_core::{
-    fit, label_warnings, read_font, render_spec, ComposeError, CompositionSpec, DynamicImage,
-    FitTarget, ImageMetadata, LabelPosition, LoadedImage, PlacementFit, RgbColor,
-    DEFAULT_JPEG_QUALITY,
+    fit, label_warnings, read_font, render_spec, validate_annotations, AnnotationShape,
+    ComposeError, CompositionSpec, DynamicImage, FitTarget, ImageMetadata, LabelPosition,
+    LoadedImage, PlacementFit, RgbColor, SpecAnnotation, SpecPosition, DEFAULT_JPEG_QUALITY,
 };
 use warnings::Warning;
 
@@ -81,7 +81,7 @@ enum CliGradientKind {
     version,
     about = "Combine PNG, JPEG, WebP, and GIF images into one PNG, JPEG, or WebP image",
     long_about = "Arrange PNG, JPEG, WebP, or GIF images in a grid, horizontal or vertical stack, at explicit freeform positions, or as diagonal split slices of same-size images. Output format is selected by the output file extension.",
-    after_help = "Examples:\n  stitchr img1.png img2.png --layout grid --spacing 10\n  stitchr img1.png img2.jpg --layout horizontal --alignment center -o combined.jpg\n  stitchr img1.png img2.png --layout freeform --position 0 0 --position 300 80 -o combined.png\n  stitchr light.png dark.png --layout split --divider 4 --background white -o split.png\n  stitchr before.png after.png --layout horizontal --spacing 16 --background white --label Before --label After -o labeled.png\n  stitchr img1.png img2.png --spacing 40 --background-gradient '#ff7e5f' '#feb47b' --gradient-angle 135 -o gradient.png\n  stitchr img1.png img2.png --background rebeccapurple --print-spec"
+    after_help = "Examples:\n  stitchr img1.png img2.png --layout grid --spacing 10\n  stitchr img1.png img2.jpg --layout horizontal --alignment center -o combined.jpg\n  stitchr img1.png img2.png --layout freeform --position 0 0 --position 300 80 -o combined.png\n  stitchr light.png dark.png --layout split --divider 4 --background white -o split.png\n  stitchr before.png after.png --layout horizontal --spacing 16 --background white --label Before --label After -o labeled.png\n  stitchr img1.png img2.png --spacing 40 --background-gradient '#ff7e5f' '#feb47b' --gradient-angle 135 -o gradient.png\n  stitchr img1.png img2.png --background rebeccapurple --print-spec\n  stitchr shot.png --box 40 60 200 80 --arrow 400 300 260 120 -o annotated.png"
 )]
 struct Cli {
     #[arg(required_unless_present_any = ["help_json", "spec"], num_args = 1.., value_name = "IMAGE", help = "Input PNG, JPEG, WebP, or GIF paths (format detected from content; GIF uses its first frame), or - to read one image from stdin (one or more; required unless --help-json/--schema or --spec)")]
@@ -214,6 +214,18 @@ struct Cli {
 
     #[arg(long, allow_negative_numbers = true, value_parser = clap::value_parser!(u32).range(1..), value_name = "PIXELS", help = "Shrink the images so the whole output is at most this tall; spacing, borders, and labels keep their size (positive integer)")]
     max_height: Option<u32>,
+
+    #[arg(id = "box", long = "box", action = ArgAction::Append, num_args = 4, value_names = ["X", "Y", "WIDTH", "HEIGHT"], allow_negative_numbers = true, value_parser = non_negative, help = "Draw a rectangle outline on top of the output; X Y is its top-left corner in output pixels, as reported by --print-spec (nonnegative integers, WIDTH and HEIGHT positive; repeatable)")]
+    boxes: Vec<u32>,
+
+    #[arg(id = "arrow", long = "arrow", action = ArgAction::Append, num_args = 4, value_names = ["X1", "Y1", "X2", "Y2"], allow_negative_numbers = true, value_parser = non_negative, help = "Draw an arrow on top of the output from X1 Y1 to X2 Y2 (head at X2 Y2) in output pixels, as reported by --print-spec (nonnegative integers; repeatable; drawn after boxes)")]
+    arrows: Vec<u32>,
+
+    #[arg(long, default_value_t = RgbColor { red: 255, green: 0, blue: 0 }, value_name = "COLOR", help = "Box and arrow color: RGB #RRGGBB, rgb(r,g,b), or common color name (only with --box or --arrow)")]
+    annotation_color: RgbColor,
+
+    #[arg(long, default_value_t = 4, allow_negative_numbers = true, value_parser = clap::value_parser!(u32).range(1..), value_name = "PIXELS", help = "Box and arrow line width (positive integer; only with --box or --arrow)")]
+    annotation_width: u32,
     #[arg(
         long,
         short,
@@ -283,6 +295,40 @@ fn fit_target(value: &str) -> Result<FitTarget, String> {
 }
 
 impl Cli {
+    /// Boxes first, then arrows, so arrows stay visible over the boxes they point at.
+    fn annotations(&self) -> Vec<SpecAnnotation> {
+        let boxes = self
+            .boxes
+            .chunks_exact(4)
+            .map(|values| AnnotationShape::Box {
+                x: values[0],
+                y: values[1],
+                width: values[2],
+                height: values[3],
+            });
+        let arrows = self
+            .arrows
+            .chunks_exact(4)
+            .map(|values| AnnotationShape::Arrow {
+                from: SpecPosition {
+                    x: values[0],
+                    y: values[1],
+                },
+                to: SpecPosition {
+                    x: values[2],
+                    y: values[3],
+                },
+            });
+        boxes
+            .chain(arrows)
+            .map(|shape| SpecAnnotation {
+                shape,
+                color: self.annotation_color,
+                line_width: self.annotation_width,
+            })
+            .collect()
+    }
+
     fn destination(&self) -> io::Destination {
         io::Destination {
             path: self.output.clone(),
@@ -401,6 +447,7 @@ fn collect_warnings(
     collected.extend(warnings::fit_warnings(cli, metadata));
     collected.extend(warnings::scale_warnings(spec, metadata, scale));
     collected.extend(warnings::label_warnings(&label_warnings(spec), labels));
+    collected.extend(warnings::annotation_warnings(spec));
     collected
 }
 
@@ -472,7 +519,25 @@ fn compose_scaled(
     )
 }
 
+fn annotation_error(cli: &Cli, error: ComposeError) -> CliError {
+    let ComposeError::InvalidAnnotation { index, reason } = error else {
+        return CliError::from(error);
+    };
+    let option = if index < cli.boxes.len() / 4 {
+        "--box"
+    } else {
+        "--arrow"
+    };
+    CliError::from(error).with_details(json!({
+        "annotation_index": index,
+        "reason": reason,
+        "option": option
+    }))
+}
+
 fn request_from_arguments(cli: &Cli) -> Result<Request, CliError> {
+    let annotations = cli.annotations();
+    validate_annotations(&annotations).map_err(|error| annotation_error(cli, error))?;
     io::validate_stdin(&cli.images)?;
     let loaded = io::load_images(&cli.images)?;
     let metadata = metadata_of(&loaded);
@@ -494,6 +559,7 @@ fn request_from_arguments(cli: &Cli) -> Result<Request, CliError> {
             placement.path = Some(resolved_path(path));
             placement.fit = placement_fit;
         });
+    spec.annotations = annotations;
     Ok(Request {
         inputs: cli.images.clone(),
         loaded,

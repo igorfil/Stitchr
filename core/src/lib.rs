@@ -1,3 +1,4 @@
+mod annotation;
 pub mod color;
 mod diagnostics;
 pub mod fit;
@@ -6,6 +7,9 @@ mod gradient;
 mod layout;
 pub mod spec;
 
+pub use annotation::{
+    annotation_warnings, validate_annotations, AnnotationClipped, AnnotationShape, SpecAnnotation,
+};
 pub use color::{ColorParseError, RgbColor};
 pub use diagnostics::{label_warnings, LabelWarning};
 pub use fit::{FitTarget, PlacementFit};
@@ -239,6 +243,15 @@ pub fn render_spec(
     spec: &CompositionSpec,
     images: &[DynamicImage],
 ) -> Result<DynamicImage, ComposeError> {
+    let mut canvas = render_layers(spec, images)?.into_rgba8();
+    annotation::draw(&mut canvas, &spec.annotations);
+    Ok(DynamicImage::ImageRgba8(canvas))
+}
+
+fn render_layers(
+    spec: &CompositionSpec,
+    images: &[DynamicImage],
+) -> Result<DynamicImage, ComposeError> {
     if spec.images.len() != images.len() {
         return Err(ComposeError::ImageCountMismatch {
             expected: spec.images.len(),
@@ -451,6 +464,37 @@ mod tests {
         assert_eq!(rendered.get_pixel(0, 0).0, [255, 0, 0, 255]);
         assert_eq!(rendered.get_pixel(3, 1).0, [0, 0, 255, 255]);
         assert_eq!(rendered.get_pixel(1, 0).0, [12, 34, 56, 255]);
+    }
+
+    #[test]
+    fn spec_annotations_are_drawn_over_the_images() {
+        let images = [solid(4, 4, BLUE)];
+        let mut spec = spec_for(
+            &images,
+            SpecLayout::Split { divider: 0 },
+            RgbColor::default(),
+        );
+        spec.annotations = vec![SpecAnnotation {
+            shape: AnnotationShape::Box {
+                x: 1,
+                y: 1,
+                width: 3,
+                height: 3,
+            },
+            color: RgbColor {
+                red: 255,
+                green: 0,
+                blue: 0,
+            },
+            line_width: 1,
+        }];
+
+        let rendered = render_spec(&spec, &images).unwrap();
+
+        assert_eq!(rendered.get_pixel(0, 0).0, BLUE);
+        assert_eq!(rendered.get_pixel(1, 1).0, RED);
+        assert_eq!(rendered.get_pixel(2, 2).0, BLUE);
+        assert_eq!(rendered.get_pixel(3, 3).0, RED);
     }
 
     #[test]

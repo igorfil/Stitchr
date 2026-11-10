@@ -23,12 +23,13 @@ pub(crate) const ERROR_CODES: &[(&str, &str)] = &[
     ("image_count_mismatch", "The render inputs do not match the planned composition."),
     ("image_size_mismatch", "An input does not have the size its placement in the spec expects."),
     ("invalid_spec", "The --spec file is not a valid composition spec: malformed JSON, wrong shape, unknown schema_version, or an image without a path."),
+    ("invalid_annotation", "A --box has zero width or height, an --arrow starts where it ends, or a spec annotation has line_width 0."),
     ("serialization_error", "The composition could not be serialized."),
 ];
 
 pub(crate) fn exit_code_for(code: &str) -> u8 {
     match code {
-        "invalid_arguments" | "invalid_spec" => 2,
+        "invalid_arguments" | "invalid_spec" | "invalid_annotation" => 2,
         _ => 1,
     }
 }
@@ -256,6 +257,10 @@ impl From<ComposeError> for CliError {
                     "bytes": bytes,
                     "limit_bytes": limit
                 })),
+            ),
+            ComposeError::InvalidAnnotation { index, reason } => (
+                "invalid_annotation",
+                Some(json!({ "annotation_index": index, "reason": reason })),
             ),
         };
         let cli_error = Self::new(code, error.to_string());

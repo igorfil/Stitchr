@@ -32,6 +32,10 @@ pub(crate) const WARNING_CODES: &[(&str, &str)] = &[
         "fit_not_applied",
         "An image is already smaller than --fit-height/--fit-width and is left unchanged, because images are never enlarged.",
     ),
+    (
+        "annotation_clipped",
+        "A box or arrow reaches past the canvas edge, so part or all of it is not drawn.",
+    ),
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -67,6 +71,9 @@ fn ignored_reason(cli: &Cli, option: &str, applies: &Applies) -> Option<String> 
         )),
         Applies::Labels if cli.label.is_empty() => {
             Some(format!("{option} is only used with --label"))
+        }
+        Applies::Annotations if cli.boxes.is_empty() && cli.arrows.is_empty() => {
+            Some(format!("{option} is only used with --box or --arrow"))
         }
         Applies::Gradient | Applies::LinearGradient if !gradient => {
             Some(format!("{option} is only used with --background-gradient"))
@@ -123,6 +130,10 @@ const COMPOSITION_OPTIONS: &[&str] = &[
     "fit",
     "max_width",
     "max_height",
+    "box",
+    "arrow",
+    "annotation_color",
+    "annotation_width",
 ];
 
 fn explicit(cli: &Cli, id: &str) -> bool {
@@ -329,6 +340,35 @@ pub(crate) fn label_warnings(warnings: &[LabelWarning], labels: &[String]) -> Ve
     warnings
         .iter()
         .map(|warning| label_warning(warning, labels))
+        .collect()
+}
+
+/// Boxes and arrows that reach past the canvas, so part or all of them is cut off.
+pub(crate) fn annotation_warnings(spec: &CompositionSpec) -> Vec<Warning> {
+    let (width, height) = (spec.width, spec.height);
+    stitchr_core::annotation_warnings(&spec.annotations, (width, height))
+        .into_iter()
+        .map(|clipped| {
+            let (kind, index) = (clipped.kind, clipped.index);
+            let reason = if clipped.visible {
+                format!(
+                    "{kind} {index} reaches past the {width}x{height} canvas and is partly cut off"
+                )
+            } else {
+                format!("{kind} {index} lies outside the {width}x{height} canvas and is not drawn")
+            };
+            Warning {
+                code: "annotation_clipped",
+                reason,
+                context: json!({
+                    "annotation_index": clipped.index,
+                    "shape": clipped.kind,
+                    "canvas_width": width,
+                    "canvas_height": height,
+                    "visible": clipped.visible
+                }),
+            }
+        })
         .collect()
 }
 
@@ -968,6 +1008,74 @@ mod tests {
             },
         )
         .unwrap()
+    }
+
+    #[test]
+    fn annotation_styling_without_shapes_is_reported() {
+        assert_eq!(
+            ignored(&["a.png", "--annotation-color", "blue"]),
+            [(
+                "--annotation-color".to_owned(),
+                "--annotation-color is only used with --box or --arrow".to_owned()
+            )]
+        );
+        assert_eq!(
+            options(&[
+                "a.png",
+                "--annotation-width",
+                "2",
+                "--arrow",
+                "0",
+                "0",
+                "5",
+                "5"
+            ]),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn annotations_are_ignored_with_a_spec_file() {
+        assert_eq!(
+            options(&["--spec", "s.json", "--box", "0", "0", "2", "2"]),
+            ["--box"]
+        );
+    }
+
+    #[test]
+    fn annotations_past_the_canvas_are_reported() {
+        let mut spec = scaled_spec(&[(10, 10)]);
+        spec.annotations = cli(&[
+            "a.png", "--box", "5", "5", "10", "2", "--arrow", "20", "20", "30", "30",
+        ])
+        .annotations();
+
+        assert_eq!(
+            annotation_warnings(&spec)
+                .iter()
+                .map(Warning::json)
+                .collect::<Vec<_>>(),
+            [
+                json!({
+                    "code": "annotation_clipped",
+                    "annotation_index": 0,
+                    "shape": "box",
+                    "canvas_width": 10,
+                    "canvas_height": 10,
+                    "visible": true,
+                    "reason": "box 0 reaches past the 10x10 canvas and is partly cut off"
+                }),
+                json!({
+                    "code": "annotation_clipped",
+                    "annotation_index": 1,
+                    "shape": "arrow",
+                    "canvas_width": 10,
+                    "canvas_height": 10,
+                    "visible": false,
+                    "reason": "arrow 1 lies outside the 10x10 canvas and is not drawn"
+                }),
+            ]
+        );
     }
 
     #[test]

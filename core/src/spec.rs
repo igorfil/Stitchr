@@ -1,6 +1,6 @@
 use crate::{
-    fit::PlacementFit, frame, layout, Alignment, ComposeError, ComposeOptions, Layout, RgbColor,
-    SpecFrame, SpecGradient, StackDirection,
+    annotation::validate_annotations, fit::PlacementFit, frame, layout, Alignment, ComposeError,
+    ComposeOptions, Layout, RgbColor, SpecAnnotation, SpecFrame, SpecGradient, StackDirection,
 };
 use serde::{Deserialize, Serialize};
 
@@ -72,6 +72,9 @@ pub struct CompositionSpec {
     pub background_gradient: Option<SpecGradient>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frame: Option<SpecFrame>,
+    /// Drawn on top of everything else, in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub annotations: Vec<SpecAnnotation>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -174,6 +177,7 @@ pub fn compose_spec(
         background_color: params.background_color,
         background_gradient: params.background_gradient,
         frame: params.frame.clone(),
+        annotations: Vec::new(),
     })
 }
 
@@ -210,7 +214,7 @@ pub fn validate_spec(spec: &CompositionSpec) -> Result<(), ComposeError> {
             size,
         )?;
     }
-    Ok(())
+    validate_annotations(&spec.annotations)
 }
 
 #[cfg(test)]
@@ -422,6 +426,7 @@ mod validation_tests {
             background_color: RgbColor::default(),
             background_gradient: None,
             frame: None,
+            annotations: Vec::new(),
         }
     }
 

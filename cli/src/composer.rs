@@ -163,6 +163,7 @@ mod tests {
                 background_color: RgbColor::default(),
                 background_gradient: None,
                 frame: None,
+                annotations: Vec::new(),
             }
         );
         assert_eq!(explicit_zero, default);
@@ -215,6 +216,7 @@ mod tests {
                 background_color: RgbColor::default(),
                 background_gradient: None,
                 frame: None,
+                annotations: Vec::new(),
             }
         );
     }

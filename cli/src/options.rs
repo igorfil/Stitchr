@@ -8,6 +8,7 @@ pub(crate) enum Applies {
     Always,
     Layouts(&'static [CliLayout]),
     Labels,
+    Annotations,
     Gradient,
     LinearGradient,
     JpegOutput,
@@ -73,6 +74,10 @@ pub(crate) const RULES: &[OptionRule] = &[
     rule("fit", Applies::Layouts(&[CliLayout::Split])),
     ranged("max_width", Applies::Always, 1, U32_MAX),
     ranged("max_height", Applies::Always, 1, U32_MAX),
+    ranged("box", Applies::Always, 0, U32_MAX),
+    ranged("arrow", Applies::Always, 0, U32_MAX),
+    rule("annotation_color", Applies::Annotations),
+    ranged("annotation_width", Applies::Annotations, 1, U32_MAX),
     rule("gradient_kind", Applies::Gradient),
     ranged("gradient_angle", Applies::LinearGradient, 0, 359),
     ranged("jpeg_quality", Applies::JpegOutput, 1, 100),
@@ -136,6 +141,7 @@ pub(crate) fn applicability(rule: Option<&OptionRule>) -> Value {
         Applies::Always => {}
         Applies::Layouts(allowed) => fields["applies_to_layouts"] = json!(layouts(allowed)),
         Applies::Labels => fields["requires"] = json!(["--label"]),
+        Applies::Annotations => fields["requires_any"] = json!(["--box", "--arrow"]),
         Applies::Gradient => fields["requires"] = json!(["--background-gradient"]),
         Applies::LinearGradient => {
             fields["requires"] = json!(["--background-gradient"]);
@@ -189,8 +195,10 @@ mod tests {
                 if rule.id.starts_with("fit_") && value == "0" {
                     return false;
                 }
-                if rule.id == "position" {
-                    args.push("0");
+                match rule.id {
+                    "position" => args.push("0"),
+                    "box" | "arrow" => args.extend(["1", "1", "2"]),
+                    _ => {}
                 }
                 crate::Cli::try_parse_from(args).is_ok()
             };

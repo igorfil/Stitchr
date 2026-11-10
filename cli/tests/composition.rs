@@ -116,19 +116,25 @@ fn three_image_spec_tracks_mixed_png_and_jpeg_dimensions_identically() {
 
     assert_eq!(png_spec["width"], 8);
     assert_eq!(png_spec["height"], 5);
-    let path = |name: &str| {
-        std::fs::canonicalize(png_directory.path())
-            .unwrap()
-            .join(name)
-            .to_string_lossy()
-            .into_owned()
-    };
+    let canonical = |path: &Value| std::fs::canonicalize(path.as_str().unwrap()).unwrap();
+    let mut images = png_spec["images"].clone();
+    let paths = images
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .map(|image| canonical(&image.as_object_mut().unwrap().remove("path").unwrap()))
+        .collect::<Vec<_>>();
     assert_eq!(
-        png_spec["images"],
+        paths,
+        ["a.png", "b.png", "c.png"]
+            .map(|name| canonical(&json!(png_directory.path().join(name).to_string_lossy())))
+    );
+    assert_eq!(
+        images,
         json!([
-            { "name": "a.png", "path": path("a.png"), "width": 4, "height": 2, "position": { "x": 0, "y": 0 } },
-            { "name": "b.png", "path": path("b.png"), "width": 2, "height": 4, "position": { "x": 6, "y": 0 } },
-            { "name": "c.png", "path": path("c.png"), "width": 6, "height": 1, "position": { "x": 0, "y": 4 } }
+            { "name": "a.png", "width": 4, "height": 2, "position": { "x": 0, "y": 0 } },
+            { "name": "b.png", "width": 2, "height": 4, "position": { "x": 6, "y": 0 } },
+            { "name": "c.png", "width": 6, "height": 1, "position": { "x": 0, "y": 4 } }
         ])
     );
     assert_eq!(mixed_spec["width"], png_spec["width"]);

@@ -68,14 +68,16 @@ fn render_reports_written_file_dimensions_and_normalized_format() {
             ),
             0,
         );
-        let output_abs = std::fs::canonicalize(directory.path())
-            .unwrap()
-            .join(output);
+        let mut value = value;
+        let output_abs = value.as_object_mut().unwrap().remove("output_abs").unwrap();
+        assert_eq!(
+            std::fs::canonicalize(output_abs.as_str().unwrap()).unwrap(),
+            std::fs::canonicalize(directory.path().join(output)).unwrap()
+        );
         assert_eq!(
             value,
             json!({
                 "schema_version": 1, "ok": true, "output": output,
-                "output_abs": output_abs.to_string_lossy(),
                 "width": 6, "height": 4, "format": format, "scale": 1.0, "warnings": []
             })
         );

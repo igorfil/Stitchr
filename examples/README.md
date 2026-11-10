@@ -1,6 +1,6 @@
 # Stitchr examples
 
-A step-by-step tour of every Stitchr feature, from the simplest command to a fully styled composition. Each example adds one idea to the ones before it.
+A tour of every Stitchr feature, grouped by what it controls. Each section starts with the simplest form and builds from there.
 
 Run the commands from the repository root after [installing Stitchr](../README.md#install-the-cli). They use the sample images in [`docs/examples/`](../docs/examples):
 
@@ -10,115 +10,118 @@ Run the commands from the repository root after [installing Stitchr](../README.m
 | `dark.png` | 640 × 400 | Dark-theme editor screenshot |
 | `overlay.png` | 128 × 80 | Small transparent image with purple regions |
 
-## Layouts
+## 1. Layouts
 
-### 1. Side by side
+`--layout` decides how images are arranged. Images always keep their original pixel size.
 
-The simplest composition: put two images next to each other. Images keep their original pixel size.
+### Horizontal
 
 ```sh
 stitchr docs/examples/light.png docs/examples/dark.png --layout horizontal \
-  -o examples/01-side-by-side.png
+  -o examples/01-horizontal.png
 ```
 
-![Two screenshots side by side](01-side-by-side.png)
+![Two screenshots side by side](01-horizontal.png)
 
-### 2. Spacing
-
-`--spacing` adds a gap between images and the same margin around the outside. The default background is black.
+### Vertical
 
 ```sh
-stitchr docs/examples/light.png docs/examples/dark.png --layout horizontal --spacing 24 \
-  -o examples/02-spacing.png
+stitchr docs/examples/light.png docs/examples/dark.png --layout vertical \
+  -o examples/02-vertical.png
 ```
 
-![Side by side with black spacing](02-spacing.png)
+![Two screenshots stacked vertically](02-vertical.png)
 
-### 3. Background color
+### Grid
 
-`--background` sets the color of the gaps and margins. It accepts color names, `'#RRGGBB'`, and `'rgb(r,g,b)'`.
-
-```sh
-stitchr docs/examples/light.png docs/examples/dark.png --layout horizontal --spacing 24 --background white \
-  -o examples/03-background-color.png
-```
-
-![Side by side with white spacing](03-background-color.png)
-
-### 4. Vertical stack
-
-`--layout vertical` stacks images top to bottom instead.
-
-```sh
-stitchr docs/examples/light.png docs/examples/dark.png --layout vertical --spacing 24 --background white \
-  -o examples/04-vertical.png
-```
-
-![Two screenshots stacked vertically](04-vertical.png)
-
-### 5. Grid
-
-`--layout grid` fills rows left to right. `--columns` sets how many images go in each row (the default is 2).
+Fills rows left to right. `--columns` sets the row length (default 2). `grid` is the default layout.
 
 ```sh
 stitchr docs/examples/light.png docs/examples/dark.png docs/examples/dark.png docs/examples/light.png \
-  --layout grid --columns 2 --spacing 16 --background '#e2e8f0' \
-  -o examples/05-grid.png
+  --layout grid --columns 2 \
+  -o examples/03-grid.png
 ```
 
-![Four screenshots in a two-by-two grid](05-grid.png)
+![Four screenshots in a two-by-two grid](03-grid.png)
 
-### 6. Alignment
+### Freeform
 
-When images have different sizes, `--alignment` decides where smaller ones sit: `start`, `center`, or `end`. In a horizontal stack it works on the vertical axis. Transparent pixels show the background.
-
-```sh
-stitchr docs/examples/overlay.png docs/examples/light.png docs/examples/overlay.png \
-  --layout horizontal --alignment center --spacing 16 --background '#e2e8f0' \
-  -o examples/06-alignment.png
-```
-
-![Small images vertically centered beside a screenshot](06-alignment.png)
-
-### 7. Freeform
-
-`--layout freeform` places each image at an exact `X Y` position, one `--position` per image. Later images are painted on top of earlier ones, so they can overlap.
+Places each image at an exact `X Y` position, one `--position` per image. Later images are painted over earlier ones.
 
 ```sh
 stitchr docs/examples/light.png docs/examples/dark.png \
-  --layout freeform --position 0 0 --position 240 120 --background white \
-  -o examples/07-freeform.png
+  --layout freeform --position 0 0 --position 240 120 \
+  -o examples/04-freeform.png
 ```
 
-![Dark screenshot overlapping the light one](07-freeform.png)
+![Dark screenshot overlapping the light one](04-freeform.png)
 
-### 8. Diagonal split
+### Diagonal split
 
-`--layout split` shows a diagonal slice of each image in one frame, which is useful for before/after or light/dark comparisons. All inputs must be the same size, and the output keeps that size.
+Shows a diagonal slice of each image in one frame, in input order. All inputs must be the same size, and the output keeps that size.
 
 ```sh
 stitchr docs/examples/light.png docs/examples/dark.png --layout split \
-  -o examples/08-split.png
+  -o examples/05-split.png
 ```
 
-![Light and dark screenshots split diagonally](08-split.png)
+![Light and dark screenshots split diagonally](05-split.png)
 
-### 9. Split divider
+## 2. Spacing and alignment
 
-`--divider` draws a line between the slices in the background color.
+### Spacing
+
+`--spacing` adds the same gap between images and around the outside. Works with grid and stack layouts.
 
 ```sh
-stitchr docs/examples/light.png docs/examples/dark.png --layout split --divider 6 --background white \
-  -o examples/09-split-divider.png
+stitchr docs/examples/light.png docs/examples/dark.png --layout horizontal --spacing 24 \
+  -o examples/06-spacing.png
 ```
 
-![Diagonal split with a white divider](09-split-divider.png)
+![Side by side with spacing](06-spacing.png)
 
-## Backgrounds
+### Alignment
 
-### 10. Linear gradient
+`--alignment` (`start`, `center`, `end`) positions smaller images within their row or column. In a horizontal stack it acts on the vertical axis.
 
-`--background-gradient FROM TO` replaces the solid background with a two-color gradient. `--gradient-angle` sets its direction in degrees, like CSS: `0` points up, `90` right, `180` down (the default).
+```sh
+stitchr docs/examples/overlay.png docs/examples/light.png docs/examples/overlay.png \
+  --layout horizontal --spacing 16 --alignment center \
+  -o examples/07-alignment.png
+```
+
+![Small images vertically centered beside a screenshot](07-alignment.png)
+
+### Split divider
+
+`--divider` is the split layout's equivalent of spacing: a line between slices, drawn in the background color.
+
+```sh
+stitchr docs/examples/light.png docs/examples/dark.png --layout split --divider 6 \
+  -o examples/08-split-divider.png
+```
+
+![Diagonal split with a divider](08-split-divider.png)
+
+## 3. Backgrounds
+
+The background fills spacing, alignment gaps, and transparent pixels. The default is black.
+
+### Solid color
+
+`--background` accepts color names, `'#RRGGBB'`, and `'rgb(r,g,b)'`.
+
+```sh
+stitchr docs/examples/light.png docs/examples/dark.png --layout horizontal --spacing 24 \
+  --background '#14b8a6' \
+  -o examples/09-background-color.png
+```
+
+![Side by side on a teal background](09-background-color.png)
+
+### Linear gradient
+
+`--background-gradient FROM TO` replaces the solid color. `--gradient-angle` sets the direction in degrees, as in CSS: `0` up, `90` right, `180` down (default).
 
 ```sh
 stitchr docs/examples/light.png docs/examples/dark.png --layout horizontal --spacing 40 \
@@ -128,9 +131,9 @@ stitchr docs/examples/light.png docs/examples/dark.png --layout horizontal --spa
 
 ![Screenshots on a diagonal orange-to-purple gradient](10-linear-gradient.png)
 
-### 11. Radial gradient
+### Radial gradient
 
-`--gradient-kind radial` spreads the gradient outward from the center of the canvas to its corners.
+`--gradient-kind radial` spreads from the center of the canvas to its corners.
 
 ```sh
 stitchr docs/examples/light.png docs/examples/dark.png --layout vertical --spacing 40 \
@@ -140,48 +143,47 @@ stitchr docs/examples/light.png docs/examples/dark.png --layout vertical --spaci
 
 ![Stacked screenshots on a radial gradient](11-radial-gradient.png)
 
-## Borders and labels
+## 4. Borders and labels
 
-### 12. Labels
+Pass one `--label` per image, in input order. Every image then gets a border, and non-empty labels appear in a tab over the image's top-left corner.
 
-Give one `--label` per image, in the same order as the inputs. Each image gets a border, and its label appears in a tab on top of the image's top-left corner.
+### Borders
 
-```sh
-stitchr docs/examples/light.png docs/examples/dark.png --layout horizontal --spacing 40 \
-  --background-gradient '#ff7e5f' '#6a3093' --gradient-angle 135 \
-  --label Light --label Dark --border-color white --border-width 3 \
-  -o examples/12-labels-on-gradient.png
-```
-
-![Labeled screenshots with white borders on a gradient](12-labels-on-gradient.png)
-
-### 13. Borders only
-
-Use an empty label (`--label ""`) to draw just the border. `--border-width` and `--border-color` style it.
+An empty label (`--label ""`) draws only the border. `--border-width` and `--border-color` style it.
 
 ```sh
-stitchr docs/examples/light.png docs/examples/dark.png --layout horizontal --spacing 24 --background white \
+stitchr docs/examples/light.png docs/examples/dark.png --layout horizontal --spacing 24 --background '#e2e8f0' \
   --label "" --label "" --border-width 4 --border-color '#334155' \
-  -o examples/13-borders-only.png
+  -o examples/12-borders.png
 ```
 
-![Screenshots with dark borders and no labels](13-borders-only.png)
+![Screenshots with dark borders](12-borders.png)
 
-### 14. Label size
-
-`--label-size` sets the font size in pixels (the default is 20). The label text switches between black and white automatically to stay readable on the border color.
+### Labels
 
 ```sh
-stitchr docs/examples/light.png docs/examples/dark.png --layout horizontal --spacing 24 --background white \
-  --label Before --label After --label-size 32 --border-width 4 --border-color '#0ea5e9' \
-  -o examples/14-label-size.png
+stitchr docs/examples/light.png docs/examples/dark.png --layout horizontal --spacing 24 --background '#e2e8f0' \
+  --label Light --label Dark \
+  -o examples/13-labels.png
 ```
 
-![Large Before and After labels on blue borders](14-label-size.png)
+![Screenshots with default gray label tabs](13-labels.png)
 
-### 15. Labeled split
+### Label style
 
-In a split, one border goes around the whole image, and each label sits at the top of its own slice.
+`--label-size` sets the font size in pixels (default 20). The text turns black or white to contrast with the border color.
+
+```sh
+stitchr docs/examples/light.png docs/examples/dark.png --layout horizontal --spacing 24 --background '#e2e8f0' \
+  --label Before --label After --label-size 32 --border-width 4 --border-color '#0ea5e9' \
+  -o examples/14-label-style.png
+```
+
+![Large Before and After labels on blue borders](14-label-style.png)
+
+### Labeled split
+
+A split gets one border around the whole image, with each label at the top of its slice.
 
 ```sh
 stitchr docs/examples/light.png docs/examples/dark.png --layout split --divider 4 --background white \
@@ -191,9 +193,33 @@ stitchr docs/examples/light.png docs/examples/dark.png --layout split --divider 
 
 ![Diagonal split with a label on each slice](15-labeled-split.png)
 
-### 16. Everything together
+## 5. Putting it together
 
-A grid, a gradient, and styled labels in one command.
+### Single image
+
+Stitchr works on one image too: spacing becomes a margin, so you can give a screenshot a background, a border, and a title.
+
+```sh
+stitchr docs/examples/dark.png --spacing 48 \
+  --background-gradient '#4facfe' '#6a3093' --gradient-angle 135 \
+  --label "Dark theme" --label-size 24 --border-width 3 --border-color white \
+  -o examples/16-single-image.png
+```
+
+![A single screenshot with a title on a gradient](16-single-image.png)
+
+### Before and after
+
+```sh
+stitchr docs/examples/light.png docs/examples/dark.png --layout horizontal --spacing 40 \
+  --background-gradient '#ff7e5f' '#6a3093' --gradient-angle 135 \
+  --label Light --label Dark --border-color white --border-width 3 \
+  -o examples/17-before-after.png
+```
+
+![Labeled screenshots with white borders on a gradient](17-before-after.png)
+
+### Labeled grid
 
 ```sh
 stitchr docs/examples/light.png docs/examples/dark.png docs/examples/dark.png docs/examples/light.png \
@@ -201,27 +227,27 @@ stitchr docs/examples/light.png docs/examples/dark.png docs/examples/dark.png do
   --background-gradient '#4facfe' '#6a3093' --gradient-angle 120 \
   --label "Light · v1" --label "Dark · v1" --label "Dark · v2" --label "Light · v2" \
   --label-size 22 --border-width 3 --border-color white \
-  -o examples/16-everything-together.png
+  -o examples/18-labeled-grid.png
 ```
 
-![Labeled two-by-two grid on a blue-to-purple gradient](16-everything-together.png)
+![Labeled two-by-two grid on a gradient](18-labeled-grid.png)
 
-## Output and inspection
+## 6. Output and inspection
 
-### 17. JPEG output
+### JPEG
 
-The output file extension picks the format: `.png`, `.jpg`, or `.jpeg`. JPEG files are smaller but lossy.
+The output extension picks the format: `.png`, `.jpg`, or `.jpeg`.
 
 ```sh
-stitchr docs/examples/light.png docs/examples/dark.png --layout horizontal --spacing 24 --background white \
-  -o examples/17-jpeg.jpg
+stitchr docs/examples/light.png docs/examples/dark.png --layout horizontal --spacing 24 --background '#14b8a6' \
+  -o examples/19-jpeg.jpg
 ```
 
-![Side by side, saved as JPEG](17-jpeg.jpg)
+![Side by side, saved as JPEG](19-jpeg.jpg)
 
-### 18. Inspect before rendering
+### Inspect before rendering
 
-`--print-spec` shows the final canvas size and where each image will go, without writing a file. Add `--json` for a single-line, versioned result that scripts and AI agents can parse.
+`--print-spec` prints the canvas size and each image's position without writing a file. `--json` wraps it in a single-line, versioned result for scripts and AI agents.
 
 ```sh
 stitchr --json docs/examples/light.png docs/examples/dark.png --layout horizontal --spacing 24 \
@@ -232,8 +258,8 @@ stitchr --json docs/examples/light.png docs/examples/dark.png --layout horizonta
 {"ok":true,"schema_version":1,"spec":{"background_color":{"blue":0,"green":0,"red":0},"frame":{"border_color":{"blue":128,"green":128,"red":128},"border_width":2,"label_size":20,"labels":["Light","Dark"]},"height":452,"images":[{"name":"light.png","position":{"x":26,"y":26}},{"name":"dark.png","position":{"x":694,"y":26}}],"layout":{"alignment":"start","direction":"horizontal","spacing":24,"type":"stack"},"schema_version":1,"width":1360}}
 ```
 
-Run `stitchr --help-json` to get the full list of options in machine-readable form. The [agent guide](../docs/agents.md) explains the JSON results and error codes.
+`stitchr --help-json` lists every option in machine-readable form. The [agent guide](../docs/agents.md) covers JSON results and error codes.
 
 ## Regenerating these images
 
-To regenerate every image on this page, run `examples/generate.sh` from the repository root (set `STITCHR` to use a specific binary, for example `STITCHR=target/release/stitchr`).
+Run `examples/generate.sh` from the repository root. Set `STITCHR` to use a specific binary, for example `STITCHR=target/release/stitchr`.

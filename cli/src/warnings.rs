@@ -27,6 +27,7 @@ enum Applies {
     LinearGradient,
     JpegOutput,
     Render,
+    FileOutput,
 }
 
 const STACKS_AND_GRID: &[CliLayout] =
@@ -46,6 +47,9 @@ const RULES: &[(&str, Applies)] = &[
     ("jpeg_quality", Applies::JpegOutput),
     ("output", Applies::Render),
     ("format", Applies::Render),
+    ("force", Applies::FileOutput),
+    ("no_clobber", Applies::FileOutput),
+    ("mkdir", Applies::FileOutput),
 ];
 
 fn value_name(value: impl ValueEnum) -> String {
@@ -79,13 +83,16 @@ fn ignored_reason(cli: &Cli, option: &str, applies: &Applies) -> Option<String> 
         Applies::LinearGradient if cli.gradient_kind == CliGradientKind::Radial => {
             Some(format!("{option} is not used by radial gradients"))
         }
-        Applies::JpegOutput | Applies::Render if cli.print_spec => {
+        Applies::JpegOutput | Applies::Render | Applies::FileOutput if cli.print_spec => {
             Some(format!("{option} is not used with --print-spec"))
         }
         Applies::JpegOutput => match io::output_format(&cli.output, cli.format) {
             Ok(ExportFormat::Png) => Some(format!("{option} is not used for PNG output")),
             _ => None,
         },
+        Applies::FileOutput if io::is_stdio(&cli.output) => {
+            Some(format!("{option} is not used with -o -"))
+        }
         _ => None,
     }
 }
@@ -448,6 +455,50 @@ mod tests {
                 "--format is not used with --print-spec",
             ]
         );
+    }
+
+    #[test]
+    fn file_output_flags_apply_to_file_renders() {
+        assert_eq!(
+            options(&[
+                "a.png",
+                "--force",
+                "--no-clobber",
+                "--mkdir",
+                "-o",
+                "dir/out.png"
+            ]),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn file_output_flags_are_ignored_for_stdout() {
+        assert_eq!(
+            ignored(&[
+                "a.png",
+                "-o",
+                "-",
+                "--format",
+                "png",
+                "--force",
+                "--no-clobber",
+                "--mkdir"
+            ])
+            .into_iter()
+            .map(|(_, reason)| reason)
+            .collect::<Vec<_>>(),
+            [
+                "--force is not used with -o -",
+                "--no-clobber is not used with -o -",
+                "--mkdir is not used with -o -",
+            ]
+        );
+    }
+
+    #[test]
+    fn file_output_flags_are_ignored_when_printing_the_spec() {
+        assert_eq!(options(&["a.png", "--print-spec", "--mkdir"]), ["--mkdir"]);
     }
 
     #[test]

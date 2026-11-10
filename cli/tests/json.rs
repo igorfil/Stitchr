@@ -67,10 +67,14 @@ fn render_reports_written_file_dimensions_and_normalized_format() {
             ),
             0,
         );
+        let output_abs = std::fs::canonicalize(directory.path())
+            .unwrap()
+            .join(output);
         assert_eq!(
             value,
             json!({
                 "schema_version": 1, "ok": true, "output": output,
+                "output_abs": output_abs.to_string_lossy(),
                 "width": 6, "height": 4, "format": format, "warnings": []
             })
         );
@@ -360,4 +364,132 @@ fn freeform_position_count_details_report_counts() {
         value["error"]["details"],
         json!({ "expected": 2, "actual": 1 })
     );
+}
+
+#[test]
+fn output_that_is_an_input_is_refused_without_force() {
+    let directory = fixtures();
+    let before = std::fs::read(directory.path().join("first.png")).unwrap();
+    let value = response(
+        &run(
+            &directory,
+            &["--json", "first.png", "second.png", "-o", "first.png"],
+        ),
+        1,
+    );
+
+    assert_eq!(value["error"]["code"], "output_conflicts_with_input");
+    assert_eq!(
+        value["error"]["details"],
+        json!({ "path": "first.png", "index": 0, "input": "first.png" })
+    );
+    assert_eq!(
+        std::fs::read(directory.path().join("first.png")).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn force_allows_overwriting_an_input() {
+    let directory = fixtures();
+    let value = response(
+        &run(
+            &directory,
+            &[
+                "--json",
+                "first.png",
+                "second.png",
+                "--layout",
+                "horizontal",
+                "-o",
+                "first.png",
+                "--force",
+            ],
+        ),
+        0,
+    );
+
+    assert_eq!(value["width"], 3);
+    let image = stitchr_core::load_image(directory.path().join("first.png")).unwrap();
+    assert_eq!((image.width(), image.height()), (3, 2));
+}
+
+#[test]
+fn print_spec_does_not_check_the_destination() {
+    let directory = fixtures();
+    let value = response(
+        &run(
+            &directory,
+            &["--json", "first.png", "-o", "first.png", "--print-spec"],
+        ),
+        0,
+    );
+
+    assert_eq!(value["spec"]["width"], 2);
+}
+
+#[test]
+fn no_clobber_refuses_an_existing_output() {
+    let directory = fixtures();
+    std::fs::write(directory.path().join("out.png"), "keep").unwrap();
+    let value = response(
+        &run(
+            &directory,
+            &["--json", "first.png", "-o", "out.png", "--no-clobber"],
+        ),
+        1,
+    );
+
+    assert_eq!(value["error"]["code"], "output_exists");
+    assert_eq!(value["error"]["details"], json!({ "path": "out.png" }));
+    assert_eq!(
+        std::fs::read(directory.path().join("out.png")).unwrap(),
+        b"keep"
+    );
+}
+
+#[test]
+fn no_clobber_writes_a_new_output() {
+    let directory = fixtures();
+    let value = response(
+        &run(
+            &directory,
+            &["--json", "first.png", "-o", "new.png", "--no-clobber"],
+        ),
+        0,
+    );
+
+    assert_eq!(value["output"], "new.png");
+    assert!(directory.path().join("new.png").exists());
+}
+
+#[test]
+fn mkdir_creates_missing_parent_directories() {
+    let directory = fixtures();
+    let value = response(
+        &run(
+            &directory,
+            &["--json", "first.png", "-o", "a/b/out.png", "--mkdir"],
+        ),
+        0,
+    );
+
+    assert_eq!(value["output"], "a/b/out.png");
+    assert!(value["output_abs"]
+        .as_str()
+        .unwrap()
+        .ends_with("a/b/out.png"));
+    assert!(directory.path().join("a/b/out.png").exists());
+}
+
+#[test]
+fn missing_parent_directory_without_mkdir_is_an_output_error() {
+    let directory = fixtures();
+    let value = response(
+        &run(&directory, &["--json", "first.png", "-o", "a/b/out.png"]),
+        1,
+    );
+
+    assert_eq!(value["error"]["code"], "output_error");
+    assert_eq!(value["error"]["details"], json!({ "path": "a/b/out.png" }));
 }

@@ -164,6 +164,15 @@ struct Cli {
     #[arg(long, action = ArgAction::SetTrue, help = "Print versioned JSON results and errors to stdout")]
     json: bool,
 
+    #[arg(long, action = ArgAction::SetTrue, help = "Allow the output to overwrite one of the inputs (boolean; default: false)")]
+    force: bool,
+
+    #[arg(long, action = ArgAction::SetTrue, help = "Fail with output_exists instead of overwriting an existing output file (boolean; default: false)")]
+    no_clobber: bool,
+
+    #[arg(long, action = ArgAction::SetTrue, help = "Create missing parent directories of the output file (boolean; default: false)")]
+    mkdir: bool,
+
     #[arg(long, action = ArgAction::SetTrue, help = "Fail with invalid_arguments instead of rendering when there are warnings (boolean; default: false)")]
     strict: bool,
 
@@ -185,6 +194,16 @@ fn non_negative(value: &str) -> Result<u32, String> {
 }
 
 impl Cli {
+    fn destination(&self) -> io::Destination {
+        io::Destination {
+            path: self.output.clone(),
+            format: self.format,
+            jpeg_quality: self.jpeg_quality,
+            no_clobber: self.no_clobber,
+            mkdir: self.mkdir,
+        }
+    }
+
     fn compose_params(&self) -> CliComposeParams<'_> {
         CliComposeParams {
             layout: self.layout,
@@ -229,6 +248,7 @@ impl Success {
             Self::Spec { spec, .. } => json!({ "spec": spec }),
             Self::Rendered { result, .. } => json!({
                 "output": result.output.to_string_lossy(),
+                "output_abs": result.output_abs.as_ref().map(|path| path.to_string_lossy()),
                 "width": result.width,
                 "height": result.height,
                 "format": result.format
@@ -301,13 +321,14 @@ fn execute(cli: Cli) -> Result<Success, CliError> {
         });
     }
     io::validate_stdout(&cli.output, cli.format, cli.json)?;
+    io::validate_destination(&cli.output, &cli.images, cli.force, cli.no_clobber)?;
     let images = loaded
         .into_iter()
         .map(|loaded| loaded.image)
         .collect::<Vec<_>>();
     let composed = render_spec(&spec, &images)
         .map_err(|error| CliError::from(error).with_input_paths(&cli.images))?;
-    let result = io::export(cli.output, &composed, cli.format, cli.jpeg_quality)?;
+    let result = io::export(cli.destination(), &composed)?;
     Ok(Success::Rendered { result, warnings })
 }
 
@@ -667,7 +688,7 @@ mod tests {
             .map(|image| image.image.clone())
             .collect::<Vec<_>>();
         let composed = render_spec(&spec, &pixels).unwrap();
-        io::export(cli.output, &composed, cli.format, cli.jpeg_quality).unwrap()
+        io::export(cli.destination(), &composed).unwrap()
     }
 
     #[test]
@@ -742,6 +763,7 @@ mod tests {
         let success = Success::Rendered {
             result: io::ExportResult {
                 output: PathBuf::from("out.png"),
+                output_abs: Some(PathBuf::from("/work/out.png")),
                 width: 3,
                 height: 4,
                 format: "png",
@@ -753,7 +775,7 @@ mod tests {
             success.json(),
             json!({
                 "schema_version": SCHEMA_VERSION, "ok": true, "output": "out.png",
-                "width": 3, "height": 4, "format": "png", "warnings": []
+                "output_abs": "/work/out.png", "width": 3, "height": 4, "format": "png", "warnings": []
             })
         );
         assert_eq!(success.human().as_deref(), Some("out.png"));
@@ -764,6 +786,7 @@ mod tests {
         let success = Success::Rendered {
             result: io::ExportResult {
                 output: PathBuf::from("-"),
+                output_abs: None,
                 width: 1,
                 height: 1,
                 format: "png",

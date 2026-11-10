@@ -53,6 +53,7 @@ Success:
   "schema_version": 1,
   "ok": true,
   "output": "split.png",
+  "output_abs": "/home/me/project/split.png",
   "width": 640,
   "height": 400,
   "format": "png",
@@ -60,7 +61,7 @@ Success:
 }
 ```
 
-Check the process exit code and `ok`, then inspect the saved image when visual verification matters. `output` is the destination as supplied, not a resolved absolute path. Relative paths are relative to the process working directory.
+Check the process exit code and `ok`, then inspect the saved image when visual verification matters. `output` is the destination as supplied; `output_abs` is the same path made absolute against the process working directory (symlinks are not resolved). With `-o -`, `output_abs` is `null`.
 
 ## JSON contract, version 1
 
@@ -77,7 +78,7 @@ Successful response fields depend on the operation:
 
 | Operation | Additional fields |
 | --- | --- |
-| Render | `output` (string), `width` and `height` (integers), `format` (`"png"` or `"jpeg"`), `warnings` (array) |
+| Render | `output` (string), `output_abs` (string or `null`), `width` and `height` (integers), `format` (`"png"` or `"jpeg"`), `warnings` (array) |
 | `--print-spec` | `spec` (object), `warnings` (array) |
 | `--help-json` / `--schema` | `schema` (object) |
 | `--help` / `-h` | `help` (string) |
@@ -153,7 +154,9 @@ Many errors also carry an `error.details` object with machine-readable context. 
 | `invalid_arguments` | Missing inputs, unknown flags, invalid enum/color/numeric values, wrong argument arity, or a repeated single-use option such as `--background-gradient`. Also: `-` used as an input more than once, `-o -` with `--json`, `-o -` without `--format`, or any warning under `--strict`. Inspect the schema and correct the arguments. |
 | `input_error` | Input is missing, unreadable, corrupt, or unsupported. Check its path (or stdin bytes for `-`) and PNG/JPEG encoding. |
 | `unsupported_output_format` | Choose an output ending in `.png`, `.jpg`, or `.jpeg`, or pass `--format png\|jpeg`. |
-| `output_error` | Check the destination directory, permissions, available space, and whether the destination is a directory. |
+| `output_error` | Check the destination directory, permissions, available space, and whether the destination is a directory. Pass `--mkdir` to create missing parent directories. |
+| `output_conflicts_with_input` | The output is the same file as an input (including through symlinks or hard links). Choose another output, or pass `--force` to overwrite the input. |
+| `output_exists` | `--no-clobber` was given and the output already exists. Choose another output or drop `--no-clobber`. |
 | `freeform_position_count` | Supply exactly one `--position X Y` pair per input image. |
 | `split_size_mismatch` | Use identically sized inputs, or choose a grid/stack layout. Stitchr does not resize inputs for split mode. |
 | `label_count_mismatch` | Supply exactly one `--label` per input image, or none. Use `--label ""` for a border without a label. |
@@ -184,7 +187,7 @@ Some engine-level codes are defensive and are not normally reachable through val
 - Background defaults to black. All outputs are opaque; input alpha blends onto the background. JPEG is lossy.
 - Coordinates, spacing, divider, and columns are unsigned 32-bit integers; columns must be at least `1`. Large valid integers can still exceed composition limits.
 - The RGBA canvas buffer is limited to 512 MiB. Input decoding and intermediate buffers use additional memory.
-- Output defaults to `stitched.png`. The extension controls format, case-insensitively, unless `--format png|jpeg` (alias `jpg`) overrides it. Existing files are overwritten without a prompt; parent directories must already exist.
+- Output defaults to `stitched.png`. The extension controls format, case-insensitively, unless `--format png|jpeg` (alias `jpg`) overrides it. Existing files are overwritten without a prompt, except that an output naming one of the inputs is refused unless `--force` is given. `--no-clobber` refuses any existing output file. Parent directories must already exist unless `--mkdir` is given. Spec inspection does not check the destination.
 - `-o -` writes only the encoded image bytes to stdout and requires `--format`. It cannot be combined with `--json`, since stdout would no longer be a single JSON object; errors still go to stderr.
 - `--jpeg-quality` is an integer from `1` to `100`, default `75`. It applies only to JPEG output and is ignored for PNG. Values outside the range are `invalid_arguments` errors.
 

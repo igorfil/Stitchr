@@ -54,14 +54,14 @@ stitchr --json docs/examples/light.png docs/examples/dark.png \
 ```
 
 ```json
-{"format":"png","height":400,"ok":true,"output":"comparison.png","schema_version":1,"warnings":[],"width":640}
+{"format":"png","height":400,"ok":true,"output":"comparison.png","output_abs":"/home/me/comparison.png","schema_version":1,"warnings":[],"width":640}
 ```
 
 Errors use `{"schema_version":1,"ok":false,"error":{"code":"...","message":"..."}}` and a nonzero exit code. `--json` also wraps spec/schema queries and keeps help and argument errors machine-readable. Options that have no effect (such as `--spacing` with `--layout split`) and labels that overflow their image are reported as `warnings`; add `--strict` to make them errors. The [agent guide](docs/agents.md) documents mode combinations, exit codes, recovery, and compatibility rules.
 
 ### Output behavior
 
-- The output extension selects PNG (`.png`) or JPEG (`.jpg`, `.jpeg`). `--format png|jpeg` overrides the extension. Existing output files are overwritten.
+- The output extension selects PNG (`.png`) or JPEG (`.jpg`, `.jpeg`). `--format png|jpeg` overrides the extension. Existing output files are overwritten, but Stitchr refuses to overwrite one of its inputs unless you pass `--force`. Use `--no-clobber` to never overwrite, and `--mkdir` to create missing parent directories.
 - `--jpeg-quality` sets JPEG quality from 1 to 100 (default 75). It is ignored for PNG.
 - Use `-` as an input to read one image from stdin, and `-o -` with `--format` to write the image to stdout: `cat a.png | stitchr - b.png -o - --format png > out.png`. `-o -` cannot be combined with `--json`. Use `./-` for a file literally named `-`.
 - Images keep their original pixel dimensions, after applying EXIF orientation.

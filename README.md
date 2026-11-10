@@ -1,12 +1,12 @@
 # Stitchr
 
-Combine PNG and JPEG images into grids, stacks, freeform arrangements, or diagonal split comparisons.
+Combine PNG and JPEG images into grids, stacks, freeform arrangements, or diagonal split comparisons, with solid or gradient backgrounds, borders, and labels.
 
 Stitchr is a local image-composition CLI for macOS and Linux, built for both people and AI agents. Agents get a machine-readable argument schema, layout inspection before rendering, and versioned JSON results with stable error codes. An **experimental macOS app** is included in this repository.
 
-![A diagonal split comparison of the included light and dark sample images](docs/examples/split.png)
+![Light and dark screenshots with labels and white borders on an orange-to-purple gradient](examples/17-before-after.png)
 
-**Explore:** [Runnable cookbook](docs/examples/README.md) · [Agent usage guide](docs/agents.md) · [Machine-readable examples](docs/examples/cases.json)
+**Explore:** [Examples](examples/README.md) · [Runnable cookbook](docs/examples/README.md) · [Agent usage guide](docs/agents.md) · [Machine-readable examples](docs/examples/cases.json)
 
 ## Install the CLI
 
@@ -17,7 +17,7 @@ cargo install --git https://github.com/igorfil/Stitchr stitchr-cli --locked
 stitchr --help
 ```
 
-Cargo installs `stitchr` into `~/.cargo/bin`; make sure that directory is on your `PATH`. To install from a local checkout instead (for example, to run the cookbook against the included sample images):
+Cargo installs `stitchr` into `~/.cargo/bin`; make sure that directory is on your `PATH`. To install from a local checkout instead (for example, to run the examples against the included sample images):
 
 ```sh
 git clone https://github.com/igorfil/Stitchr.git
@@ -27,71 +27,22 @@ cargo install --path cli --locked
 
 ## Usage
 
-### Grid
-
 ```sh
-stitchr img1.png img2.png --layout grid --spacing 10
+stitchr before.png after.png --layout horizontal --spacing 24 -o combined.png
 ```
 
-Writes `stitched.png` using two columns, a black background, and 10-pixel gaps and outer margins. Use `--columns` to change the grid width and `--background` to choose an opaque color.
+The [examples](examples/README.md) show every option with its command and output image:
 
-### Horizontal or vertical stack
+| Feature | Options | Examples |
+| --- | --- | --- |
+| Layouts | `--layout grid\|horizontal\|vertical\|freeform\|split`, `--columns`, `--position` | [Layouts](examples/README.md#1-layouts) |
+| Spacing and alignment | `--spacing`, `--alignment`, `--divider` | [Spacing and alignment](examples/README.md#2-spacing-and-alignment) |
+| Backgrounds | `--background`, `--background-gradient`, `--gradient-kind`, `--gradient-angle` | [Backgrounds](examples/README.md#3-backgrounds) |
+| Borders and labels | `--label`, `--border-width`, `--border-color`, `--label-size` | [Borders and labels](examples/README.md#4-borders-and-labels) |
+| Combined recipes | Single image with a title, before/after, labeled grid | [Putting it together](examples/README.md#5-putting-it-together) |
+| Output and inspection | `-o file.png\|.jpg`, `--print-spec`, `--json` | [Output and inspection](examples/README.md#6-output-and-inspection) |
 
-```sh
-stitchr img1.png img2.jpg --layout horizontal --alignment center -o combined.jpg
-stitchr img1.png img2.png --layout vertical --spacing 16 --background white -o vertical.png
-```
-
-Alignment is `start`, `center`, or `end`. Images keep their original pixel dimensions, after applying EXIF orientation.
-
-### Freeform
-
-```sh
-stitchr img1.png img2.png --layout freeform \
-  --position 0 0 --position 300 80 -o freeform.png
-```
-
-Supply one nonnegative `(X, Y)` position per input. Later images are painted over earlier ones. Spacing and alignment do not apply to freeform layouts.
-
-### Diagonal split
-
-Reproduce the example above using the included [light](docs/examples/light.png) and [dark](docs/examples/dark.png) sample images:
-
-```sh
-stitchr docs/examples/light.png docs/examples/dark.png \
-  --layout split --divider 4 --background white -o split.png
-```
-
-Split inputs must have identical dimensions. The output keeps those dimensions and shows a diagonal slice of each input, in argument order. `--divider` sets the width of the background-colored line between slices.
-
-### Gradient background
-
-```sh
-stitchr img1.png img2.png --spacing 40 \
-  --background-gradient '#ff7e5f' '#6a3093' --gradient-angle 135 -o gradient.png
-stitchr img1.png img2.png --layout vertical --spacing 30 \
-  --background-gradient white navy --gradient-kind radial -o radial.png
-```
-
-`--background-gradient FROM TO` replaces the solid `--background`. `--gradient-kind` is `linear` (default) or `radial` (from the canvas center out to the corners). `--gradient-angle` sets the linear direction in degrees like CSS: `0` up, `90` right, `180` down (default). Split dividers stay solid and use the `FROM` color.
-
-### Borders and labels
-
-```sh
-stitchr before.png after.png --layout horizontal --spacing 16 --background white \
-  --label Before --label After -o labeled.png
-```
-
-Pass one `--label` per input, in order, to draw a border tightly around each image, with a tab holding its label on top of the image's top-left corner. The tab covers that part of the image; the border adds `--border-width` pixels on each side. Use `--label ""` for a border without a tab. `--border-width` (default 2), `--border-color` (default gray), and `--label-size` (font size in pixels, default 20) adjust the frame. Grid, stack, and freeform layouts frame each image; freeform positions place the frame's top-left corner. Split layouts get one border around the whole canvas, with each slice's tab placed where that slice starts on the top edge.
-
-### Inspect a composition
-
-```sh
-stitchr img1.png img2.png --layout grid --print-spec
-stitchr --help-json
-```
-
-`--print-spec` loads the inputs and prints resolved canvas dimensions and image positions as JSON without writing an image. `--help-json` (also `--schema`) prints the CLI's machine-readable argument specification.
+Run `stitchr --help` for the full option reference, or `stitchr --help-json` (also `--schema`) for the same reference as JSON.
 
 ### Use from an agent
 
@@ -111,7 +62,8 @@ Errors use `{"schema_version":1,"ok":false,"error":{"code":"...","message":"..."
 ### Output behavior
 
 - The output extension selects PNG (`.png`) or JPEG (`.jpg`, `.jpeg`). Existing output files are overwritten.
-- Background colors accept names, `'#RRGGBB'`, and `'rgb(r,g,b)'`; quote colors containing shell metacharacters.
+- Images keep their original pixel dimensions, after applying EXIF orientation.
+- Colors accept names, `'#RRGGBB'`, and `'rgb(r,g,b)'`; quote colors containing shell metacharacters.
 - Output is opaque: transparent input pixels blend onto the selected background.
 - The canvas buffer is limited to 512 MiB; oversized compositions return an error. Input images and intermediate buffers require additional memory.
 
@@ -126,6 +78,8 @@ The app is a working prototype, not a finished desktop release. It supports file
 | Spacing and alignment | Yes | Yes |
 | Diagonal split and divider | Yes | Not available |
 | Custom background color | Yes | Black only |
+| Gradient backgrounds | Yes | Not available |
+| Borders and labels | Yes | Not available |
 | JSON composition/CLI specification | Yes | Not available |
 
 ### Build and run

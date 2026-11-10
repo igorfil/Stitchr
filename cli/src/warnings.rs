@@ -76,20 +76,61 @@ fn ignored_reason(cli: &Cli, option: &str, applies: &Applies) -> Option<String> 
     }
 }
 
-/// Explicitly passed options that have no effect on this invocation.
-pub(crate) fn option_warnings(cli: &Cli) -> Vec<Warning> {
-    RULES
+/// Options that only shape a composition built from arguments, so a `--spec` file overrides them.
+const COMPOSITION_OPTIONS: &[&str] = &[
+    "layout",
+    "columns",
+    "spacing",
+    "alignment",
+    "background_color",
+    "background_gradient",
+    "gradient_kind",
+    "gradient_angle",
+    "position",
+    "divider",
+    "label",
+    "border_width",
+    "border_color",
+    "label_size",
+];
+
+fn explicit(cli: &Cli, id: &str) -> bool {
+    cli.explicit.iter().any(|explicit| explicit == id)
+}
+
+fn spec_warnings(cli: &Cli) -> Vec<Warning> {
+    COMPOSITION_OPTIONS
         .iter()
-        .filter(|rule| cli.explicit.iter().any(|explicit| explicit == rule.id))
-        .filter_map(|rule| {
-            let option = long_name(rule.id);
-            ignored_reason(cli, &option, &rule.applies).map(|reason| Warning {
+        .filter(|id| cli.spec.is_some() && explicit(cli, id))
+        .map(|id| {
+            let option = long_name(id);
+            Warning {
                 code: "option_ignored",
-                reason,
+                reason: format!("{option} is not used with --spec"),
                 context: json!({ "option": option }),
-            })
+            }
         })
         .collect()
+}
+
+/// Explicitly passed options that have no effect on this invocation.
+pub(crate) fn option_warnings(cli: &Cli) -> Vec<Warning> {
+    let overridden = |id: &str| cli.spec.is_some() && COMPOSITION_OPTIONS.contains(&id);
+    let mut warnings = spec_warnings(cli);
+    warnings.extend(
+        RULES
+            .iter()
+            .filter(|rule| explicit(cli, rule.id) && !overridden(rule.id))
+            .filter_map(|rule| {
+                let option = long_name(rule.id);
+                ignored_reason(cli, &option, &rule.applies).map(|reason| Warning {
+                    code: "option_ignored",
+                    reason,
+                    context: json!({ "option": option }),
+                })
+            }),
+    );
+    warnings
 }
 
 fn label_warning(warning: &LabelWarning, labels: &[String]) -> Warning {
@@ -487,6 +528,59 @@ mod tests {
     #[test]
     fn file_output_flags_are_ignored_when_printing_the_spec() {
         assert_eq!(options(&["a.png", "--print-spec", "--mkdir"]), ["--mkdir"]);
+    }
+
+    #[test]
+    fn composition_options_are_ignored_with_a_spec_file() {
+        assert_eq!(
+            ignored(&[
+                "--spec",
+                "s.json",
+                "--layout",
+                "split",
+                "--background",
+                "red",
+                "--label",
+                "A"
+            ]),
+            [
+                (
+                    "--layout".to_owned(),
+                    "--layout is not used with --spec".to_owned()
+                ),
+                (
+                    "--background".to_owned(),
+                    "--background is not used with --spec".to_owned()
+                ),
+                (
+                    "--label".to_owned(),
+                    "--label is not used with --spec".to_owned()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn spec_file_overrides_layout_rules_without_duplicate_warnings() {
+        assert_eq!(
+            options(&["--spec", "s.json", "--layout", "split", "--spacing", "4"]),
+            ["--layout", "--spacing"]
+        );
+    }
+
+    #[test]
+    fn output_rules_still_apply_with_a_spec_file() {
+        assert_eq!(
+            ignored(&["--spec", "s.json", "--jpeg-quality", "80"]),
+            [(
+                "--jpeg-quality".to_owned(),
+                "--jpeg-quality is not used for PNG output".to_owned()
+            )]
+        );
+        assert_eq!(
+            options(&["--spec", "s.json", "-o", "out.jpg", "--mkdir"]),
+            Vec::<String>::new()
+        );
     }
 
     #[test]

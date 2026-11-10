@@ -3,6 +3,7 @@ mod error;
 mod io;
 mod options;
 mod schema;
+mod spec_file;
 mod warnings;
 
 use clap::{parser::ValueSource, ArgAction, CommandFactory, FromArgMatches, Parser, ValueEnum};
@@ -10,9 +11,14 @@ use composer::{CliComposeParams, CliComposer};
 use error::CliError;
 use io::is_stdio;
 use serde_json::{json, Value};
-use std::{ffi::OsString, path::PathBuf, process::ExitCode};
+use std::{
+    ffi::OsString,
+    path::{Path, PathBuf},
+    process::ExitCode,
+};
 use stitchr_core::{
-    label_warnings, render_spec, CompositionSpec, ImageMetadata, RgbColor, DEFAULT_JPEG_QUALITY,
+    label_warnings, render_spec, CompositionSpec, ImageMetadata, LoadedImage, RgbColor,
+    DEFAULT_JPEG_QUALITY,
 };
 use warnings::Warning;
 
@@ -63,8 +69,16 @@ enum CliGradientKind {
     after_help = "Examples:\n  stitchr img1.png img2.png --layout grid --spacing 10\n  stitchr img1.png img2.jpg --layout horizontal --alignment center -o combined.jpg\n  stitchr img1.png img2.png --layout freeform --position 0 0 --position 300 80 -o combined.png\n  stitchr light.png dark.png --layout split --divider 4 --background white -o split.png\n  stitchr before.png after.png --layout horizontal --spacing 16 --background white --label Before --label After -o labeled.png\n  stitchr img1.png img2.png --spacing 40 --background-gradient '#ff7e5f' '#feb47b' --gradient-angle 135 -o gradient.png\n  stitchr img1.png img2.png --background rebeccapurple --print-spec"
 )]
 struct Cli {
-    #[arg(required_unless_present = "help_json", num_args = 1.., value_name = "IMAGE", help = "Input PNG/JPEG paths, or - to read one image from stdin (one or more; required unless --help-json/--schema)")]
+    #[arg(required_unless_present_any = ["help_json", "spec"], num_args = 1.., value_name = "IMAGE", help = "Input PNG/JPEG paths, or - to read one image from stdin (one or more; required unless --help-json/--schema or --spec)")]
     images: Vec<PathBuf>,
+
+    #[arg(
+        long,
+        value_name = "FILE",
+        conflicts_with = "images",
+        help = "Render a spec printed by --print-spec (file, or - for stdin) instead of composing inputs; layout options are ignored"
+    )]
+    spec: Option<PathBuf>,
 
     #[arg(
         long,
@@ -298,12 +312,70 @@ fn spec_json(spec: &CompositionSpec) -> Result<Value, CliError> {
 }
 
 fn collect_warnings(cli: &Cli, spec: &CompositionSpec, metadata: &[ImageMetadata]) -> Vec<Warning> {
+    let labels = spec
+        .frame
+        .as_ref()
+        .map_or(&[][..], |frame| frame.labels.as_slice());
     let mut collected = warnings::option_warnings(cli);
     collected.extend(warnings::label_warnings(
         &label_warnings(spec, metadata),
-        &cli.label,
+        labels,
     ));
     collected
+}
+
+struct Request {
+    inputs: Vec<PathBuf>,
+    loaded: Vec<LoadedImage>,
+    metadata: Vec<ImageMetadata>,
+    spec: CompositionSpec,
+}
+
+fn resolved_path(path: &Path) -> String {
+    if is_stdio(path) {
+        return path.to_string_lossy().into_owned();
+    }
+    std::path::absolute(path)
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn metadata_of(loaded: &[LoadedImage]) -> Vec<ImageMetadata> {
+    loaded.iter().map(|image| image.metadata.clone()).collect()
+}
+
+fn request_from_arguments(cli: &Cli) -> Result<Request, CliError> {
+    io::validate_stdin(&cli.images)?;
+    let loaded = io::load_images(&cli.images)?;
+    let metadata = metadata_of(&loaded);
+    let mut spec = CliComposer::compose(&metadata, cli.compose_params())
+        .map_err(|error| CliError::from(error).with_input_paths(&cli.images))?;
+    spec.images
+        .iter_mut()
+        .zip(&cli.images)
+        .for_each(|(placement, path)| placement.path = Some(resolved_path(path)));
+    Ok(Request {
+        inputs: cli.images.clone(),
+        loaded,
+        metadata,
+        spec,
+    })
+}
+
+fn request_from_spec(source: &Path) -> Result<Request, CliError> {
+    let spec = spec_file::read(source)?;
+    let inputs = spec_file::input_paths(&spec);
+    io::validate_stdin(&inputs)?;
+    let loaded = io::load_images(&inputs)?;
+    let metadata = metadata_of(&loaded);
+    spec_file::check_sizes(&spec, &metadata)?;
+    Ok(Request {
+        inputs,
+        loaded,
+        metadata,
+        spec,
+    })
 }
 
 fn execute(cli: Cli) -> Result<Success, CliError> {
@@ -312,32 +384,29 @@ fn execute(cli: Cli) -> Result<Success, CliError> {
         Some(SchemaFormat::Jsonschema) => return Ok(Success::Schema(schema::json_schema())),
         None => {}
     }
-    io::validate_stdin(&cli.images)?;
-    let loaded = io::load_images(&cli.images)?;
-    let metadata = loaded
-        .iter()
-        .map(|image| image.metadata.clone())
-        .collect::<Vec<_>>();
-    let spec = CliComposer::compose(&metadata, cli.compose_params())
-        .map_err(|error| CliError::from(error).with_input_paths(&cli.images))?;
-    let warnings = collect_warnings(&cli, &spec, &metadata);
+    let request = match &cli.spec {
+        Some(source) => request_from_spec(source)?,
+        None => request_from_arguments(&cli)?,
+    };
+    let warnings = collect_warnings(&cli, &request.spec, &request.metadata);
     if cli.strict && !warnings.is_empty() {
         return Err(CliError::strict(&warnings));
     }
     if cli.print_spec {
         return Ok(Success::Spec {
-            spec: spec_json(&spec)?,
+            spec: spec_json(&request.spec)?,
             warnings,
         });
     }
     io::validate_stdout(&cli.output, cli.format, cli.json)?;
-    io::validate_destination(&cli.output, &cli.images, cli.force, cli.no_clobber)?;
-    let images = loaded
+    io::validate_destination(&cli.output, &request.inputs, cli.force, cli.no_clobber)?;
+    let images = request
+        .loaded
         .into_iter()
         .map(|loaded| loaded.image)
         .collect::<Vec<_>>();
-    let composed = render_spec(&spec, &images)
-        .map_err(|error| CliError::from(error).with_input_paths(&cli.images))?;
+    let composed = render_spec(&request.spec, &images)
+        .map_err(|error| CliError::from(error).with_input_paths(&request.inputs))?;
     let result = io::export(cli.destination(), &composed)?;
     Ok(Success::Rendered { result, warnings })
 }

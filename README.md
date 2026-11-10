@@ -40,7 +40,7 @@ The [examples](examples/README.md) show every option with its command and output
 | Backgrounds | `--background`, `--background-gradient`, `--gradient-kind`, `--gradient-angle` | [Backgrounds](examples/README.md#3-backgrounds) |
 | Borders and labels | `--label`, `--border-width`, `--border-color`, `--label-size` | [Borders and labels](examples/README.md#4-borders-and-labels) |
 | Combined recipes | Single image with a title, before/after, labeled grid | [Putting it together](examples/README.md#5-putting-it-together) |
-| Output and inspection | `-o file.png\|.jpg\|-`, `--format`, `--jpeg-quality`, `--print-spec`, `--json` | [Output and inspection](examples/README.md#6-output-and-inspection) |
+| Output and inspection | `-o file.png\|.jpg\|-`, `--format`, `--jpeg-quality`, `--print-spec`, `--spec`, `--json` | [Output and inspection](examples/README.md#6-output-and-inspection) |
 
 Run `stitchr --help` for the full option reference, or `stitchr --help-json` (also `--schema`) for the same reference as JSON.
 

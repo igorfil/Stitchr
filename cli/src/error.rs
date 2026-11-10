@@ -21,14 +21,14 @@ pub(crate) const ERROR_CODES: &[(&str, &str)] = &[
     ("invalid_columns", "Grid columns must be positive."),
     ("image_count_mismatch", "The render inputs do not match the planned composition."),
     ("image_size_mismatch", "An input does not have the size its placement in the spec expects."),
+    ("invalid_spec", "The --spec file is not a valid composition spec: malformed JSON, wrong shape, unknown schema_version, or an image without a path."),
     ("serialization_error", "The composition could not be serialized."),
 ];
 
 pub(crate) fn exit_code_for(code: &str) -> u8 {
-    if code == "invalid_arguments" {
-        2
-    } else {
-        1
+    match code {
+        "invalid_arguments" | "invalid_spec" => 2,
+        _ => 1,
     }
 }
 

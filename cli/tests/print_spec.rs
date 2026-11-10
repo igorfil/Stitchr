@@ -38,8 +38,8 @@ fn prints_resolved_spec_with_loaded_image_metadata() {
     assert_eq!(
         spec["images"],
         json!([
-            { "name": "first.png", "width": 2, "height": 1, "position": { "x": 8, "y": 8 } },
-            { "name": "second.jpg", "width": 1, "height": 1, "position": { "x": 8, "y": 17 } }
+            { "name": "first.png", "path": first.to_str().unwrap(), "width": 2, "height": 1, "position": { "x": 8, "y": 8 } },
+            { "name": "second.jpg", "path": second.to_str().unwrap(), "width": 1, "height": 1, "position": { "x": 8, "y": 17 } }
         ])
     );
     assert_eq!(spec["width"], 18);
@@ -89,8 +89,8 @@ fn freeform_print_spec_omits_spacing_and_alignment() {
     assert_eq!(
         spec["images"],
         json!([
-            { "name": "first.png", "width": 2, "height": 1, "position": { "x": 1, "y": 2 } },
-            { "name": "second.png", "width": 1, "height": 1, "position": { "x": 3, "y": 4 } }
+            { "name": "first.png", "path": first.to_str().unwrap(), "width": 2, "height": 1, "position": { "x": 1, "y": 2 } },
+            { "name": "second.png", "path": second.to_str().unwrap(), "width": 1, "height": 1, "position": { "x": 3, "y": 4 } }
         ])
     );
     assert_eq!(spec["layout"]["type"], "freeform");

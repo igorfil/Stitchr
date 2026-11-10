@@ -41,7 +41,25 @@ stitchr --json docs/examples/light.png docs/examples/dark.png \
 
 Read `response.spec.width`, `height`, `layout`, `background_color`, and `images`. Each image has a `name`, the `width` and `height` it is drawn at, and a top-left `position`. Split images all have position `(0, 0)`; the renderer selects their diagonal regions.
 
-`--print-spec` loads and decodes the inputs, but writes no image. It does not validate the export destination or allocate the canvas. Rendering can still fail because of memory limits or output permissions. The printed spec is an inspection format; there is no CLI option to read it back as a render request.
+`--print-spec` loads and decodes the inputs, but writes no image. It does not validate the export destination or allocate the canvas. Rendering can still fail because of memory limits or output permissions. Each image in the printed spec also has a `path`: the input made absolute (or `"-"` for stdin).
+
+### 3b. Optionally, patch the spec and render it
+
+`--spec FILE` (or `--spec -` for stdin) renders a spec printed by `--print-spec` instead of composing positional inputs. This gives shell-free, patchable requests: edit `position`, `background_color`, `background_gradient`, `frame`, `width`, or `height`, then render. The spec is authoritative: images are drawn at their `position` on a `width` x `height` canvas, and layout options such as `--spacing` are ignored (each one passed explicitly produces an `option_ignored` warning). Output options (`-o`, `--format`, `--jpeg-quality`, `--force`, `--no-clobber`, `--mkdir`) and `--print-spec` work as usual.
+
+```sh
+stitchr --json a.png b.png --layout horizontal --print-spec > spec.json
+# edit spec.json ...
+stitchr --json --spec spec.json -o out.png
+```
+
+Rules:
+
+- Inputs are loaded from each image's `path`; relative paths are relative to the process working directory. `name` is informational.
+- Each input must still have the `width` and `height` recorded in the spec, otherwise the request fails with `image_size_mismatch`.
+- `schema_version`, when present, must be `1`. Unknown fields are ignored.
+- `--spec` cannot be combined with positional inputs. With `--spec -`, no image may also use `-`.
+- Malformed or inconsistent specs fail with `invalid_spec` (exit code 2), or with the engine's error code, such as `label_count_mismatch` or `split_size_mismatch`.
 
 ### 4. Render with the same inputs and layout options
 
@@ -170,6 +188,7 @@ Many errors also carry an `error.details` object with machine-readable context. 
 | `invalid_columns` | The engine requires positive grid columns. CLI argument validation normally reports this as `invalid_arguments`. |
 | `image_size_mismatch` | An input's size differs from the `width`/`height` its placement in the spec expects. Re-run `--print-spec` against the current inputs. |
 | `image_count_mismatch` | The render inputs do not match the planned composition. Replan; if persistent, report a bug. |
+| `invalid_spec` | The `--spec` input is not valid JSON, is not a composition spec, has an unsupported `schema_version`, has an image without a `path`, or reads stdin twice. Re-create it with `--print-spec`. |
 | `serialization_error` | The composition could not be serialized. Report a bug. |
 
 Some engine-level codes are defensive and are not normally reachable through valid CLI arguments.

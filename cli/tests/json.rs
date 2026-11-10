@@ -80,6 +80,26 @@ fn render_reports_written_file_dimensions_and_normalized_format() {
 }
 
 #[test]
+fn invalid_jpeg_quality_is_an_argument_error() {
+    let directory = fixtures();
+    let value = response(
+        &run(
+            &directory,
+            &[
+                "first.png",
+                "--jpeg-quality",
+                "0",
+                "-o",
+                "out.jpg",
+                "--json",
+            ],
+        ),
+        2,
+    );
+    assert_eq!(value["error"]["code"], "invalid_arguments");
+}
+
+#[test]
 fn processing_failures_have_stable_codes_and_no_output_file() {
     let directory = fixtures();
     std::fs::write(directory.path().join("corrupt.png"), "not an image").unwrap();

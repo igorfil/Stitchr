@@ -149,6 +149,7 @@ Some engine-level codes are defensive and are not normally reachable through val
 - Coordinates, spacing, divider, and columns are unsigned 32-bit integers; columns must be at least `1`. Large valid integers can still exceed composition limits.
 - The RGBA canvas buffer is limited to 512 MiB. Input decoding and intermediate buffers use additional memory.
 - Output defaults to `stitched.png`. The extension controls format, case-insensitively. Existing files are overwritten without a prompt; parent directories must already exist.
+- `--jpeg-quality` is an integer from `1` to `100`, default `75`. It applies only to JPEG output and is ignored for PNG. Values outside the range are `invalid_arguments` errors.
 
 ## Invoke without a shell
 

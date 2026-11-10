@@ -40,7 +40,7 @@ The [examples](examples/README.md) show every option with its command and output
 | Backgrounds | `--background`, `--background-gradient`, `--gradient-kind`, `--gradient-angle` | [Backgrounds](examples/README.md#3-backgrounds) |
 | Borders and labels | `--label`, `--border-width`, `--border-color`, `--label-size` | [Borders and labels](examples/README.md#4-borders-and-labels) |
 | Combined recipes | Single image with a title, before/after, labeled grid | [Putting it together](examples/README.md#5-putting-it-together) |
-| Output and inspection | `-o file.png\|.jpg`, `--print-spec`, `--json` | [Output and inspection](examples/README.md#6-output-and-inspection) |
+| Output and inspection | `-o file.png\|.jpg`, `--jpeg-quality`, `--print-spec`, `--json` | [Output and inspection](examples/README.md#6-output-and-inspection) |
 
 Run `stitchr --help` for the full option reference, or `stitchr --help-json` (also `--schema`) for the same reference as JSON.
 
@@ -62,6 +62,7 @@ Errors use `{"schema_version":1,"ok":false,"error":{"code":"...","message":"..."
 ### Output behavior
 
 - The output extension selects PNG (`.png`) or JPEG (`.jpg`, `.jpeg`). Existing output files are overwritten.
+- `--jpeg-quality` sets JPEG quality from 1 to 100 (default 75). It is ignored for PNG.
 - Images keep their original pixel dimensions, after applying EXIF orientation.
 - Colors accept names, `'#RRGGBB'`, and `'rgb(r,g,b)'`; quote colors containing shell metacharacters.
 - Output is opaque: transparent input pixels blend onto the selected background.

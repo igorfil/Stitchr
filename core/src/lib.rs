@@ -264,10 +264,23 @@ pub fn render_spec(
     }
 }
 
+// Matches the `image` crate's default JPEG encoder quality.
+pub const DEFAULT_JPEG_QUALITY: u8 = 75;
+
 pub fn export_image(
     image: &DynamicImage,
     path: impl AsRef<Path>,
     format: ExportFormat,
+) -> image::ImageResult<()> {
+    export_image_with_quality(image, path, format, DEFAULT_JPEG_QUALITY)
+}
+
+/// `jpeg_quality` (1-100) applies only to JPEG output.
+pub fn export_image_with_quality(
+    image: &DynamicImage,
+    path: impl AsRef<Path>,
+    format: ExportFormat,
+    jpeg_quality: u8,
 ) -> image::ImageResult<()> {
     match format {
         ExportFormat::Png => image.save_with_format(path, ImageFormat::Png),
@@ -275,8 +288,10 @@ pub fn export_image(
             let mut background =
                 RgbaImage::from_pixel(image.width(), image.height(), Rgba([255, 255, 255, 255]));
             imageops::overlay(&mut background, image, 0, 0);
-            DynamicImage::ImageRgb8(DynamicImage::ImageRgba8(background).to_rgb8())
-                .save_with_format(path, ImageFormat::Jpeg)
+            let rgb = DynamicImage::ImageRgba8(background).to_rgb8();
+            let file = std::io::BufWriter::new(std::fs::File::create(path)?);
+            image::codecs::jpeg::JpegEncoder::new_with_quality(file, jpeg_quality)
+                .encode_image(&rgb)
         }
     }
 }
@@ -1524,6 +1539,27 @@ mod tests {
             );
         }
         assert_eq!(background_pixel[3], 255);
+    }
+
+    #[test]
+    fn lower_jpeg_quality_produces_smaller_file() {
+        let noisy = DynamicImage::ImageRgba8(RgbaImage::from_fn(64, 64, |x, y| {
+            Rgba([
+                (x * 37 % 256) as u8,
+                (y * 53 % 256) as u8,
+                ((x ^ y) * 7 % 256) as u8,
+                255,
+            ])
+        }));
+        let directory = tempfile::tempdir().unwrap();
+        let low = directory.path().join("low.jpg");
+        let high = directory.path().join("high.jpg");
+
+        export_image_with_quality(&noisy, &low, ExportFormat::Jpeg, 10).unwrap();
+        export_image_with_quality(&noisy, &high, ExportFormat::Jpeg, 100).unwrap();
+
+        let size = |path: &Path| std::fs::metadata(path).unwrap().len();
+        assert!(size(&low) < size(&high));
     }
 
     #[test]

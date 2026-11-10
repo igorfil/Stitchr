@@ -7,8 +7,8 @@ use error::CliError;
 use serde_json::{json, Value};
 use std::{path::PathBuf, process::ExitCode};
 use stitchr_core::{
-    export_image, load_image_with_metadata, render_spec, CompositionSpec, DynamicImage,
-    ExportFormat, LoadedImage, RgbColor,
+    export_image_with_quality, load_image_with_metadata, render_spec, CompositionSpec,
+    DynamicImage, ExportFormat, LoadedImage, RgbColor, DEFAULT_JPEG_QUALITY,
 };
 
 const SCHEMA_VERSION: u32 = 1;
@@ -126,6 +126,9 @@ struct Cli {
         help = "Output file (.png, .jpg, or .jpeg; default: stitched.png)"
     )]
     output: PathBuf,
+
+    #[arg(long, default_value_t = DEFAULT_JPEG_QUALITY, value_parser = clap::value_parser!(u8).range(1..=100), value_name = "QUALITY", help = "JPEG encoding quality (integer 1-100; only for .jpg/.jpeg output)")]
+    jpeg_quality: u8,
 
     #[arg(long = "help-json", visible_alias = "schema", action = ArgAction::SetTrue, help = "Print the full CLI specification as JSON (boolean; default: false)")]
     help_json: bool,
@@ -273,9 +276,13 @@ struct ExportResult {
     format: &'static str,
 }
 
-fn run(output: PathBuf, composed: DynamicImage) -> Result<ExportResult, CliError> {
+fn run(
+    output: PathBuf,
+    composed: DynamicImage,
+    jpeg_quality: u8,
+) -> Result<ExportResult, CliError> {
     let format = output_format(&output)?;
-    export_image(&composed, &output, format).map_err(|error| {
+    export_image_with_quality(&composed, &output, format, jpeg_quality).map_err(|error| {
         CliError::new(
             "output_error",
             format!("cannot write {}: {error}", output.display()),
@@ -414,7 +421,7 @@ fn main() -> ExitCode {
             return CliError::from(error).report(cli.json, ExitCode::FAILURE);
         }
     };
-    match run(cli.output, composed) {
+    match run(cli.output, composed, cli.jpeg_quality) {
         Ok(result) => {
             if cli.json {
                 println!(
@@ -440,7 +447,7 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use stitchr_core::DynamicImage;
+    use stitchr_core::{export_image, DynamicImage};
 
     #[test]
     fn parses_documented_flags_and_requires_inputs() {
@@ -525,6 +532,10 @@ mod tests {
             json!(["linear", "radial"])
         );
         assert_eq!(by_name("gradient_angle")["default"], 180);
+        assert_eq!(by_name("jpeg_quality")["type"], "integer");
+        assert_eq!(by_name("jpeg_quality")["default"], 75);
+        assert!(Cli::try_parse_from(["stitchr", "image.png", "--jpeg-quality", "0"]).is_err());
+        assert!(Cli::try_parse_from(["stitchr", "image.png", "--jpeg-quality", "101"]).is_err());
         assert!(Cli::try_parse_from([
             "stitchr",
             "image.png",
@@ -603,7 +614,12 @@ mod tests {
             .map(|image| image.image.clone())
             .collect::<Vec<_>>();
         let composed = render_spec(&spec, &pixels).unwrap();
-        assert_eq!(run(freeform.output.clone(), composed).unwrap().output, png);
+        assert_eq!(
+            run(freeform.output.clone(), composed, freeform.jpeg_quality)
+                .unwrap()
+                .output,
+            png
+        );
         let result = stitchr_core::load_image(&png).unwrap();
         assert_eq!((result.width(), result.height()), (4, 3));
 
@@ -645,7 +661,12 @@ mod tests {
             .map(|image| image.image.clone())
             .collect::<Vec<_>>();
         let composed = render_spec(&spec, &pixels).unwrap();
-        assert_eq!(run(vertical.output.clone(), composed).unwrap().output, jpeg);
+        assert_eq!(
+            run(vertical.output.clone(), composed, vertical.jpeg_quality)
+                .unwrap()
+                .output,
+            jpeg
+        );
         let result = stitchr_core::load_image(&jpeg).unwrap();
         assert_eq!((result.width(), result.height()), (6, 8));
         assert!(std::fs::read(&jpeg)

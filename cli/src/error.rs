@@ -60,9 +60,9 @@ impl From<ComposeError> for CliError {
             ComposeError::InvalidColumns => "invalid_columns",
             ComposeError::ImageCountMismatch { .. } => "image_count_mismatch",
             ComposeError::FreeformPositionCount { .. } => "freeform_position_count",
-            ComposeError::SplitSizeMismatch => "split_size_mismatch",
+            ComposeError::SplitSizeMismatch { .. } => "split_size_mismatch",
             ComposeError::LabelCountMismatch { .. } => "label_count_mismatch",
-            ComposeError::SizeOverflow => "canvas_too_large",
+            ComposeError::SizeOverflow | ComposeError::CanvasTooLarge { .. } => "canvas_too_large",
         };
         Self::new(code, error.to_string())
     }
@@ -113,7 +113,14 @@ mod tests {
                 },
                 "freeform_position_count",
             ),
-            (ComposeError::SplitSizeMismatch, "split_size_mismatch"),
+            (
+                ComposeError::SplitSizeMismatch {
+                    index: 1,
+                    expected: (1, 1),
+                    actual: (2, 2),
+                },
+                "split_size_mismatch",
+            ),
             (
                 ComposeError::LabelCountMismatch {
                     expected: 1,
@@ -122,6 +129,15 @@ mod tests {
                 "label_count_mismatch",
             ),
             (ComposeError::SizeOverflow, "canvas_too_large"),
+            (
+                ComposeError::CanvasTooLarge {
+                    width: 1,
+                    height: 1,
+                    bytes: 4,
+                    limit: 1,
+                },
+                "canvas_too_large",
+            ),
         ] {
             let error = CliError::from(error);
             assert_eq!(error.code(), code);

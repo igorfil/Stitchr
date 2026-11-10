@@ -55,11 +55,32 @@ pub enum ComposeError {
     NoImages,
     InvalidImageDimensions,
     InvalidColumns,
-    ImageCountMismatch { expected: usize, actual: usize },
-    FreeformPositionCount { expected: usize, actual: usize },
-    SplitSizeMismatch,
-    LabelCountMismatch { expected: usize, actual: usize },
+    ImageCountMismatch {
+        expected: usize,
+        actual: usize,
+    },
+    FreeformPositionCount {
+        expected: usize,
+        actual: usize,
+    },
+    SplitSizeMismatch {
+        index: usize,
+        expected: (u32, u32),
+        actual: (u32, u32),
+    },
+    LabelCountMismatch {
+        expected: usize,
+        actual: usize,
+    },
+    /// A canvas dimension does not fit in a `u32`.
     SizeOverflow,
+    /// The canvas buffer would exceed the allocation limit.
+    CanvasTooLarge {
+        width: u32,
+        height: u32,
+        bytes: u64,
+        limit: u64,
+    },
 }
 
 impl fmt::Display for ComposeError {
@@ -74,16 +95,34 @@ impl fmt::Display for ComposeError {
             Self::FreeformPositionCount { expected, actual } => {
                 write!(f, "expected {expected} freeform positions, got {actual}")
             }
-            Self::SplitSizeMismatch => {
+            Self::SplitSizeMismatch {
+                index,
+                expected,
+                actual,
+            } => {
                 write!(
                     f,
-                    "split layout requires all images to have the same dimensions"
+                    "split layout requires all images to have the same dimensions: image {index} is {}x{}, expected {}x{}",
+                    actual.0, actual.1, expected.0, expected.1
                 )
             }
             Self::LabelCountMismatch { expected, actual } => {
                 write!(f, "expected {expected} labels, got {actual}")
             }
-            Self::SizeOverflow => write!(f, "composition dimensions exceed the supported size"),
+            Self::SizeOverflow => write!(
+                f,
+                "composition dimensions exceed the supported size: a side would be larger than {} px",
+                u32::MAX
+            ),
+            Self::CanvasTooLarge {
+                width,
+                height,
+                bytes,
+                limit,
+            } => write!(
+                f,
+                "composition dimensions exceed the supported size: a {width}x{height} canvas needs {bytes} bytes, the limit is {limit}"
+            ),
         }
     }
 }
@@ -116,11 +155,28 @@ pub(crate) fn plan(sizes: &[(u32, u32)], options: &ComposeOptions) -> Result<Pla
     with_padding(plan, options.spacing)
 }
 
+/// Fails on the first image whose size differs from `expected`.
+pub(crate) fn require_same_size(
+    sizes: impl IntoIterator<Item = (u32, u32)>,
+    expected: (u32, u32),
+) -> Result<(), ComposeError> {
+    match sizes
+        .into_iter()
+        .enumerate()
+        .find(|&(_, size)| size != expected)
+    {
+        Some((index, actual)) => Err(ComposeError::SplitSizeMismatch {
+            index,
+            expected,
+            actual,
+        }),
+        None => Ok(()),
+    }
+}
+
 fn split(sizes: &[(u32, u32)]) -> Result<Plan, ComposeError> {
     let (width, height) = sizes[0];
-    if sizes.iter().any(|&size| size != (width, height)) {
-        return Err(ComposeError::SplitSizeMismatch);
-    }
+    require_same_size(sizes.iter().copied(), (width, height))?;
     Ok(Plan {
         positions: vec![(0, 0); sizes.len()],
         width,

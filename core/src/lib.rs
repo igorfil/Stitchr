@@ -96,17 +96,26 @@ pub fn compose(
 }
 
 fn new_canvas(width: u32, height: u32, color: RgbColor) -> Result<RgbaImage, ComposeError> {
+    let too_large = || {
+        let bytes = u64::from(width)
+            .saturating_mul(u64::from(height))
+            .saturating_mul(4);
+        ComposeError::CanvasTooLarge {
+            width,
+            height,
+            bytes,
+            limit: Limits::default().max_alloc.unwrap_or(u64::MAX),
+        }
+    };
     let length = (width as usize)
         .checked_mul(height as usize)
         .and_then(|pixels| pixels.checked_mul(4))
-        .ok_or(ComposeError::SizeOverflow)?;
+        .ok_or_else(too_large)?;
     Limits::default()
         .reserve_usize(length)
-        .map_err(|_| ComposeError::SizeOverflow)?;
+        .map_err(|_| too_large())?;
     let mut pixels = Vec::new();
-    pixels
-        .try_reserve_exact(length)
-        .map_err(|_| ComposeError::SizeOverflow)?;
+    pixels.try_reserve_exact(length).map_err(|_| too_large())?;
     pixels.resize(length, 0);
     let mut canvas =
         RgbaImage::from_raw(width, height, pixels).ok_or(ComposeError::SizeOverflow)?;
@@ -122,12 +131,10 @@ fn render_split(
     divider: u32,
     background_color: RgbColor,
 ) -> Result<DynamicImage, ComposeError> {
-    if images
-        .iter()
-        .any(|image| (image.width(), image.height()) != size)
-    {
-        return Err(ComposeError::SplitSizeMismatch);
-    }
+    layout::require_same_size(
+        images.iter().map(|image| (image.width(), image.height())),
+        size,
+    )?;
     let mut canvas = new_canvas(size.0, size.1, background_color)?;
     let layers = images
         .iter()
@@ -580,10 +587,11 @@ mod tests {
                 height,
                 background_color: RgbColor::default(),
             };
-            assert_eq!(
+            assert!(matches!(
                 render_plan(&images, &plan).err(),
-                Some(ComposeError::SizeOverflow)
-            );
+                Some(ComposeError::CanvasTooLarge { width: w, height: h, .. })
+                    if (w, h) == (width, height)
+            ));
 
             let mut spec = spec_for(
                 &images,
@@ -596,11 +604,125 @@ mod tests {
             );
             spec.width = width;
             spec.height = height;
-            assert_eq!(
+            assert!(matches!(
                 render_spec(&spec, &images).err(),
-                Some(ComposeError::SizeOverflow)
-            );
+                Some(ComposeError::CanvasTooLarge { width: w, height: h, .. })
+                    if (w, h) == (width, height)
+            ));
         }
+    }
+
+    #[test]
+    fn canvas_too_large_reports_size_bytes_and_limit() {
+        let plan = PlacementPlan {
+            positions: vec![(0, 0)],
+            width: 20_000,
+            height: 10_000,
+            background_color: RgbColor::default(),
+        };
+
+        assert_eq!(
+            render_plan(&[solid(1, 1, RED)], &plan).err(),
+            Some(ComposeError::CanvasTooLarge {
+                width: 20_000,
+                height: 10_000,
+                bytes: 800_000_000,
+                limit: 512 * 1024 * 1024,
+            })
+        );
+    }
+
+    #[test]
+    fn canvas_byte_count_saturates_instead_of_wrapping() {
+        let plan = PlacementPlan {
+            positions: vec![(0, 0)],
+            width: u32::MAX,
+            height: u32::MAX,
+            background_color: RgbColor::default(),
+        };
+
+        assert!(matches!(
+            render_plan(&[solid(1, 1, RED)], &plan).err(),
+            Some(ComposeError::CanvasTooLarge {
+                bytes: u64::MAX,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn canvas_just_under_the_limit_is_allocated() {
+        let plan = PlacementPlan {
+            positions: vec![(0, 0)],
+            width: 1024,
+            height: 1024,
+            background_color: RgbColor::default(),
+        };
+
+        assert_eq!(
+            render_plan(&[solid(1, 1, RED)], &plan)
+                .unwrap()
+                .dimensions(),
+            (1024, 1024)
+        );
+    }
+
+    #[test]
+    fn split_mismatch_names_the_first_differing_image() {
+        let sizes = [(4, 4), (4, 4), (5, 4), (1, 1)];
+        let metadata = sizes
+            .iter()
+            .map(|&(width, height)| ImageMetadata {
+                name: "image".into(),
+                width,
+                height,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            compose_spec(
+                &metadata,
+                &CompositionParams {
+                    layout: SpecLayout::Split { divider: 0 },
+                    background_color: RgbColor::default(),
+                    background_gradient: None,
+                    frame: None,
+                },
+            )
+            .err(),
+            Some(ComposeError::SplitSizeMismatch {
+                index: 2,
+                expected: (4, 4),
+                actual: (5, 4)
+            })
+        );
+    }
+
+    #[test]
+    fn compose_error_messages_include_their_details() {
+        assert_eq!(
+            ComposeError::SplitSizeMismatch {
+                index: 1,
+                expected: (1280, 800),
+                actual: (1024, 768)
+            }
+            .to_string(),
+            "split layout requires all images to have the same dimensions: image 1 is 1024x768, expected 1280x800"
+        );
+        assert_eq!(
+            ComposeError::CanvasTooLarge {
+                width: 3,
+                height: 2,
+                bytes: 24,
+                limit: 10
+            }
+            .to_string(),
+            "composition dimensions exceed the supported size: a 3x2 canvas needs 24 bytes, the limit is 10"
+        );
+        assert_eq!(
+            ComposeError::SizeOverflow.to_string(),
+            "composition dimensions exceed the supported size: a side would be larger than 4294967295 px"
+        );
     }
 
     #[test]
@@ -2689,7 +2811,11 @@ mod tests {
                 },
             )
             .err(),
-            Some(ComposeError::SplitSizeMismatch)
+            Some(ComposeError::SplitSizeMismatch {
+                index: 1,
+                expected: (2, 2),
+                actual: (2, 3)
+            })
         );
         assert_eq!(
             compose(
@@ -2700,7 +2826,11 @@ mod tests {
                 },
             )
             .err(),
-            Some(ComposeError::SplitSizeMismatch)
+            Some(ComposeError::SplitSizeMismatch {
+                index: 1,
+                expected: (2, 2),
+                actual: (2, 3)
+            })
         );
 
         let spec = split_spec(
@@ -2710,7 +2840,11 @@ mod tests {
         );
         assert_eq!(
             render_spec(&spec, &images).err(),
-            Some(ComposeError::SplitSizeMismatch)
+            Some(ComposeError::SplitSizeMismatch {
+                index: 1,
+                expected: (2, 2),
+                actual: (2, 3)
+            })
         );
     }
 

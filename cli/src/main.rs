@@ -299,25 +299,23 @@ impl Cli {
     fn annotations(&self) -> Vec<SpecAnnotation> {
         let boxes = self
             .boxes
-            .chunks_exact(4)
-            .map(|values| AnnotationShape::Box {
-                x: values[0],
-                y: values[1],
-                width: values[2],
-                height: values[3],
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|&[x, y, width, height]| AnnotationShape::Box {
+                x,
+                y,
+                width,
+                height,
             });
         let arrows = self
             .arrows
-            .chunks_exact(4)
-            .map(|values| AnnotationShape::Arrow {
-                from: SpecPosition {
-                    x: values[0],
-                    y: values[1],
-                },
-                to: SpecPosition {
-                    x: values[2],
-                    y: values[3],
-                },
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|&[x1, y1, x2, y2]| AnnotationShape::Arrow {
+                from: SpecPosition { x: x1, y: y1 },
+                to: SpecPosition { x: x2, y: y2 },
             });
         boxes
             .chain(arrows)
